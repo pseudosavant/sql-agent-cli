@@ -1,6 +1,6 @@
-# sql-agent
+# sql-agent-cli
 
-`sql-agent` is a read-only SQL CLI for agentic workflows.
+`sql-agent-cli` is a read-only SQL CLI for agentic workflows.
 
 It is designed to run safe, single-statement queries against configured database targets and return deterministic output that tools like Codex CLI and Claude Code can consume reliably.
 
@@ -13,7 +13,7 @@ V1 targets:
 
 ## Status
 
-This repo is currently spec-first and under active development.
+This repo is currently under active development.
 
 The current behavior target is defined in [`spec.md`](./spec.md).
 
@@ -22,15 +22,15 @@ The current behavior target is defined in [`spec.md`](./spec.md).
 Local development:
 
 ```text
-uv run ./sql_agent.py --help
-uv run ./sql_agent.py "SELECT 1"
+uv run ./sql_agent_cli.py --help
+uv run ./sql_agent_cli.py "SELECT 1"
 ```
 
 Packaged command target:
 
 ```text
-uvx sql-agent --help
-sql-agent "SELECT 1"
+uvx sql-agent-cli --help
+sql-agent-cli "SELECT 1"
 ```
 
 ## Primary usage
@@ -38,42 +38,42 @@ sql-agent "SELECT 1"
 Default target:
 
 ```text
-sql-agent "SELECT id, name FROM users LIMIT 10"
+sql-agent-cli "SELECT id, name FROM users LIMIT 10"
 ```
 
 Named target:
 
 ```text
-sql-agent --target reporting "SELECT COUNT(*) AS total FROM users"
+sql-agent-cli --target reporting "SELECT COUNT(*) AS total FROM users"
 ```
 
 Explicit query flag:
 
 ```text
-sql-agent --target reporting --query "SELECT NOW()"
+sql-agent-cli --target reporting --query "SELECT NOW()"
 ```
 
 SQL file:
 
 ```text
-sql-agent --target reporting --sql-file query.sql
+sql-agent-cli --target reporting --sql-file query.sql
 ```
 
 Stdin:
 
 ```text
-Get-Content query.sql | sql-agent --target reporting
+Get-Content query.sql | sql-agent-cli --target reporting
 ```
 
 One-off SQLite query without config:
 
 ```text
-sql-agent --engine sqlite --path C:\data\app.db "SELECT * FROM customers LIMIT 5"
+sql-agent-cli --engine sqlite --path C:\data\app.db "SELECT * FROM customers LIMIT 5"
 ```
 
 ## Auth
 
-`sql-agent` is designed to prefer native client credential mechanisms over password arguments.
+`sql-agent-cli` is designed to prefer native client credential mechanisms over password arguments.
 
 Supported v1 auth patterns:
 
@@ -82,32 +82,32 @@ Supported v1 auth patterns:
 - Generic fallback: `--password-stdin`
 - Optional human fallback: `--prompt-password`
 
-`sql-agent` does not document or guarantee `MYSQL_PWD` as a public credential source.
+`sql-agent-cli` does not document or guarantee `MYSQL_PWD` as a public credential source.
 
 ### Bootstrap native auth files
 
 Seed a PostgreSQL template:
 
 ```text
-sql-agent config init-native-auth --engine postgres
-sql-agent config init-native-auth --engine postgres --target reporting
+sql-agent-cli config init-native-auth --engine postgres
+sql-agent-cli config init-native-auth --engine postgres --target reporting
 ```
 
 Seed a MySQL template:
 
 ```text
-sql-agent config init-native-auth --engine mysql
-sql-agent config init-native-auth --engine mysql --target dev
+sql-agent-cli config init-native-auth --engine mysql
+sql-agent-cli config init-native-auth --engine mysql --target dev
 ```
 
-When `--target NAME` is provided, the tool should prefill non-secret fields such as host, port, database, and user where possible, while leaving the password blank.
+When `--target NAME` is provided, the tool pre-fills non-secret fields such as host, port, database, and user where possible, while leaving the password blank.
 
 ## Config
 
 User config path:
 
 ```text
-~/.sql-agent/config.toml
+~/.sql-agent-cli/config.toml
 ```
 
 Example:
@@ -144,16 +144,16 @@ path = "C:/data/app.db"
 Config commands:
 
 ```text
-sql-agent config show
-sql-agent config set-default-target NAME
-sql-agent config add-target NAME [options]
-sql-agent config remove-target NAME
-sql-agent config init-native-auth --engine postgres [--target NAME]
-sql-agent config init-native-auth --engine mysql [--target NAME]
-sql-agent targets
+sql-agent-cli config show
+sql-agent-cli config set-default-target NAME
+sql-agent-cli config add-target NAME [options]
+sql-agent-cli config remove-target NAME
+sql-agent-cli config init-native-auth --engine postgres [--target NAME]
+sql-agent-cli config init-native-auth --engine mysql [--target NAME]
+sql-agent-cli targets
 ```
 
-`config show` should display effective target settings and credential-source hints without revealing secrets.
+`config show` displays effective target settings and credential-source hints without revealing secrets.
 
 ## Output
 
@@ -182,7 +182,7 @@ Intended allowed statement classes include:
 - `DESCRIBE` / `DESC`
 - `EXPLAIN`
 
-The tool is intended to reject mutating or administrative statements before execution and to execute exactly one statement per invocation.
+The tool rejects mutating or administrative statements before execution and executes exactly one statement per invocation.
 
 ## SSL
 

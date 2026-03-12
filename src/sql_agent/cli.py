@@ -24,6 +24,7 @@ FORMAT_CHOICES = ("json", "markdown", "table", "csv")
 ENGINE_CHOICES = ("mysql", "mariadb", "postgres", "postgresql", "sqlite")
 SSL_MODE_CHOICES = ("required", "preferred", "disabled")
 ADMIN_FORMAT_CHOICES = ("text", "json")
+PROGRAM_NAME = "sql-agent-cli"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -71,7 +72,7 @@ def _handle_query(argv: list[str]) -> int:
 
 
 def _handle_config(argv: list[str]) -> int:
-    parser = argparse.ArgumentParser(prog="sql-agent config")
+    parser = argparse.ArgumentParser(prog=f"{PROGRAM_NAME} config")
     subparsers = parser.add_subparsers(dest="command")
 
     show_parser = subparsers.add_parser("show")
@@ -135,7 +136,7 @@ def _handle_config(argv: list[str]) -> int:
 
 
 def _handle_targets(argv: list[str]) -> int:
-    parser = argparse.ArgumentParser(prog="sql-agent targets")
+    parser = argparse.ArgumentParser(prog=f"{PROGRAM_NAME} targets")
     parser.add_argument("--format", choices=ADMIN_FORMAT_CHOICES, default="text")
     args = parser.parse_args(argv)
     config = load_config()
@@ -190,7 +191,7 @@ def _add_target_arguments(parser: argparse.ArgumentParser) -> None:
 
 
 def _build_query_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="sql-agent")
+    parser = argparse.ArgumentParser(prog=PROGRAM_NAME)
     parser.add_argument("--target")
     parser.add_argument("--engine", choices=ENGINE_CHOICES)
     parser.add_argument("--host")

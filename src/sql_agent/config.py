@@ -10,7 +10,7 @@ from typing import Any
 
 from .models import AppConfig, Defaults, NETWORK_ENGINES, Target
 
-CONFIG_PATH = Path("~/.sql-agent/config.toml").expanduser()
+CONFIG_PATH = Path("~/.sql-agent-cli/config.toml").expanduser()
 DEFAULT_FORMAT = "json"
 DEFAULT_MAX_ROWS = 200
 DEFAULT_CONNECT_TIMEOUT_SECONDS = 8
@@ -220,7 +220,7 @@ def _native_auth_template(engine: str, target: Target | None) -> tuple[Path, str
             preferred_postgres_auth_path(),
             "\n".join(
                 [
-                    "# PostgreSQL password file for sql-agent",
+                    "# PostgreSQL password file for sql-agent-cli",
                     "# Format: hostname:port:database:username:password",
                     "# Use restrictive file permissions where PostgreSQL requires them.",
                     f"{host}:{port}:{database}:{user}:",
@@ -236,7 +236,7 @@ def _native_auth_template(engine: str, target: Target | None) -> tuple[Path, str
             preferred_mysql_option_file_path(),
             "\n".join(
                 [
-                    "# MySQL client option file for sql-agent",
+                    "# MySQL client option file for sql-agent-cli",
                     "# Stores plaintext credentials. Protect it with filesystem permissions.",
                     "[client]",
                     f"host={host}",

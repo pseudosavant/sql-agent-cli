@@ -1,13 +1,13 @@
-# Spec Draft: `sql-agent` v1
+# Spec Draft: `sql-agent-cli` v1
 
 ## Purpose
 
-Build a new Python CLI named `sql-agent` that runs safe, read-only SQL queries against local or remote databases and emits deterministic, agent-friendly output.
+Build a new Python CLI named `sql-agent-cli` that runs safe, read-only SQL queries against local or remote databases and emits deterministic, agent-friendly output.
 
 The tool should follow the same broad product pattern as `azwi` and `confluence-fetch`:
 
-1. local single-file execution via `uv run ./sql_agent.py ...` using PEP 723 inline script metadata
-2. packaged execution via `uvx sql-agent ...`
+1. local single-file execution via `uv run ./sql_agent_cli.py ...` using PEP 723 inline script metadata
+2. packaged execution via `uvx sql-agent-cli ...`
 3. agent-first stdout/stderr behavior with stable output contracts
 
 Primary audience:
@@ -26,15 +26,15 @@ License:
 
 ## Product goals
 
-1. The primary happy path is `sql-agent "SELECT ..."` against a configured default target.
+1. The primary happy path is `sql-agent-cli "SELECT ..."` against a configured default target.
 2. The tool supports named targets so multiple databases can be queried safely from one CLI.
 3. V1 supports MySQL, MariaDB, PostgreSQL, and SQLite.
 4. The internal design leaves room for SQL Server later without redesigning the config model.
 5. The tool is strictly read-only in v1.
 6. Stdout contains payload only. Diagnostics, warnings, progress, and errors go to stderr only.
 7. The default output is optimized for agents, not for humans staring at a terminal.
-8. The project is publishable so `uvx sql-agent --help` works.
-9. The repo also keeps a root-level `sql_agent.py` wrapper for `uv run`.
+8. The project is publishable so `uvx sql-agent-cli --help` works.
+9. The repo also keeps a root-level `sql_agent_cli.py` wrapper for `uv run`.
 
 ## Non-goals
 
@@ -50,15 +50,15 @@ License:
 
 ## Public command
 
-`sql-agent`
+`sql-agent-cli`
 
 ## Recommended package/module layout
 
 ```text
-sql-agent/
+sql-agent-cli/
   pyproject.toml
   README.md
-  sql_agent.py
+  sql_agent_cli.py
   spec.md
   src/
     sql_agent/
@@ -79,8 +79,8 @@ sql-agent/
 ## Packaging requirements
 
 1. Publishable Python package via `pyproject.toml`.
-2. Console script entry point exposed as `sql-agent`.
-3. Root-level `sql_agent.py` wrapper with PEP 723 metadata for local script execution.
+2. Console script entry point exposed as `sql-agent-cli`.
+3. Root-level `sql_agent_cli.py` wrapper with PEP 723 metadata for local script execution.
 4. The wrapper delegates into packaged implementation instead of duplicating the application logic.
 
 ## Dependency recommendations
@@ -101,7 +101,7 @@ Rationale:
 
 ## PEP 723 requirement
 
-`sql_agent.py` must include inline script metadata similar to:
+`sql_agent_cli.py` must include inline script metadata similar to:
 
 ```python
 # /// script
@@ -158,31 +158,31 @@ That means:
 Primary happy path:
 
 ```text
-sql-agent "SELECT ..."
+sql-agent-cli "SELECT ..."
 ```
 
 Named target:
 
 ```text
-sql-agent --target reporting "SELECT ..."
+sql-agent-cli --target reporting "SELECT ..."
 ```
 
 Explicit query flag:
 
 ```text
-sql-agent --target reporting --query "SELECT ..."
+sql-agent-cli --target reporting --query "SELECT ..."
 ```
 
 SQL file:
 
 ```text
-sql-agent --target reporting --sql-file query.sql
+sql-agent-cli --target reporting --sql-file query.sql
 ```
 
 Stdin:
 
 ```text
-Get-Content query.sql | sql-agent --target reporting
+Get-Content query.sql | sql-agent-cli --target reporting
 ```
 
 ## Supported query input forms
@@ -211,9 +211,9 @@ The tool should also support one-off execution without config by allowing connec
 Examples:
 
 ```text
-sql-agent --engine mysql --host db.example.com --database app --user paul "SELECT ..."
-sql-agent --engine postgres --host db.example.com --database app --user paul --password-stdin "SELECT ..."
-sql-agent --engine sqlite --path C:\data\app.db "SELECT ..."
+sql-agent-cli --engine mysql --host db.example.com --database app --user paul "SELECT ..."
+sql-agent-cli --engine postgres --host db.example.com --database app --user paul --password-stdin "SELECT ..."
+sql-agent-cli --engine sqlite --path C:\data\app.db "SELECT ..."
 ```
 
 Behavior:
@@ -238,15 +238,15 @@ V1 should not require `--password` as a normal CLI argument.
 ## Recommended commands
 
 ```text
-sql-agent "SELECT ..."
-sql-agent --target NAME "SELECT ..."
-sql-agent config show
-sql-agent config set-default-target NAME
-sql-agent config add-target NAME [options]
-sql-agent config remove-target NAME
-sql-agent config init-native-auth --engine postgres [--target NAME]
-sql-agent config init-native-auth --engine mysql [--target NAME]
-sql-agent targets
+sql-agent-cli "SELECT ..."
+sql-agent-cli --target NAME "SELECT ..."
+sql-agent-cli config show
+sql-agent-cli config set-default-target NAME
+sql-agent-cli config add-target NAME [options]
+sql-agent-cli config remove-target NAME
+sql-agent-cli config init-native-auth --engine postgres [--target NAME]
+sql-agent-cli config init-native-auth --engine mysql [--target NAME]
+sql-agent-cli targets
 ```
 
 Compatibility requirement:
@@ -435,7 +435,7 @@ Row count semantics:
 Use a single user config file at:
 
 ```text
-~/.sql-agent/config.toml
+~/.sql-agent-cli/config.toml
 ```
 
 ## Default target design
@@ -480,7 +480,7 @@ This is the preferred approach because:
 
 ## Secret storage policy for v1
 
-V1 should prefer native engine credential mechanisms and non-interactive secret input over storing plaintext passwords in `~/.sql-agent/config.toml`.
+V1 should prefer native engine credential mechanisms and non-interactive secret input over storing plaintext passwords in `~/.sql-agent-cli/config.toml`.
 
 Recommended policy:
 
@@ -488,7 +488,7 @@ Recommended policy:
 2. credentials should be resolved through native engine mechanisms where practical
 3. `--password-stdin` is the generic fallback for automation
 4. `--prompt-password` may exist as an optional human convenience
-5. plaintext passwords in `~/.sql-agent/config.toml` should not be the preferred design
+5. plaintext passwords in `~/.sql-agent-cli/config.toml` should not be the preferred design
 
 ## Target shape
 
@@ -585,14 +585,14 @@ Rationale:
 Recommended commands:
 
 ```text
-sql-agent config show
-sql-agent config set-default-target NAME
-sql-agent config add-target NAME --engine mysql --host HOST --port 3306 --database DB --user USER
-sql-agent config add-target NAME --engine postgres --host HOST --port 5432 --database DB --user USER
-sql-agent config add-target NAME --engine sqlite --path PATH
-sql-agent config remove-target NAME
-sql-agent config init-native-auth --engine postgres [--target NAME]
-sql-agent config init-native-auth --engine mysql [--target NAME]
+sql-agent-cli config show
+sql-agent-cli config set-default-target NAME
+sql-agent-cli config add-target NAME --engine mysql --host HOST --port 3306 --database DB --user USER
+sql-agent-cli config add-target NAME --engine postgres --host HOST --port 5432 --database DB --user USER
+sql-agent-cli config add-target NAME --engine sqlite --path PATH
+sql-agent-cli config remove-target NAME
+sql-agent-cli config init-native-auth --engine postgres [--target NAME]
+sql-agent-cli config init-native-auth --engine mysql [--target NAME]
 ```
 
 Behavior requirements:
@@ -609,8 +609,8 @@ V1 should help users bootstrap native credential files without requiring them to
 Recommended command:
 
 ```text
-sql-agent config init-native-auth --engine postgres [--target NAME]
-sql-agent config init-native-auth --engine mysql [--target NAME]
+sql-agent-cli config init-native-auth --engine postgres [--target NAME]
+sql-agent-cli config init-native-auth --engine mysql [--target NAME]
 ```
 
 Recommended behavior:

@@ -224,8 +224,8 @@ rsa = [
 ]
 
 [[package]]
-name = "sql-agent"
-version = "0.1.0"
+name = "sql-agent-cli"
+version = "0.9.1"
 source = { editable = "." }
 dependencies = [
     { name = "psycopg", extra = ["binary"] },
