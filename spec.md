@@ -4,7 +4,7 @@
 
 Build a new Python CLI named `sql-agent-cli` that runs safe, read-only SQL queries against local or remote databases and emits deterministic, agent-friendly output.
 
-The tool should follow the same broad product pattern as `azwi` and `confluence-fetch`:
+The tool should follow the same broad product pattern as similar agent-first CLIs such as `confluence-fetch`:
 
 1. local single-file execution via `uv run ./sql_agent_cli.py ...` using PEP 723 inline script metadata
 2. packaged execution via `uvx sql-agent-cli ...`

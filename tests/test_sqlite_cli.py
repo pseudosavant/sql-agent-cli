@@ -13,7 +13,7 @@ from tests._bootstrap import bootstrap_package
 
 bootstrap_package()
 
-from sql_agent.cli import main
+from sql_agent.cli import _build_query_parser, main
 
 
 def _test_temp_dir(name: str) -> Path:
@@ -25,6 +25,14 @@ def _test_temp_dir(name: str) -> Path:
 
 
 class SqliteCliTests(unittest.TestCase):
+    def test_help_emphasizes_default_target_happy_path(self) -> None:
+        help_text = _build_query_parser().format_help()
+
+        self.assertIn('sql-agent-cli "SELECT ..."', help_text)
+        self.assertIn("the configured default target/environment", help_text)
+        self.assertIn("Do not search for config files or environment details first", help_text)
+        self.assertIn("[defaults].target from ~/.sql-agent-cli/config.toml", help_text)
+
     def test_sqlite_query_returns_json_payload(self) -> None:
         temp_dir = _test_temp_dir("sqlite-query")
         self.addCleanup(lambda: shutil.rmtree(temp_dir, ignore_errors=True))

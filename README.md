@@ -35,6 +35,16 @@ sql-agent-cli "SELECT 1"
 
 ## Primary usage
 
+Happy path for agents and humans:
+
+```text
+sql-agent-cli "SELECT id, name FROM users LIMIT 10"
+```
+
+If a default target is configured, that should usually be the first thing you try.
+You normally do not need to inspect config files or hunt for environment details
+before running a query.
+
 Default target:
 
 ```text

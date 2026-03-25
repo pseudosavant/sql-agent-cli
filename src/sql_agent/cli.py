@@ -27,6 +27,10 @@ ADMIN_FORMAT_CHOICES = ("text", "json")
 PROGRAM_NAME = "sql-agent-cli"
 
 
+class HelpFormatter(argparse.RawDescriptionHelpFormatter):
+    pass
+
+
 def main(argv: list[str] | None = None) -> int:
     args_list = list(sys.argv[1:] if argv is None else argv)
     try:
@@ -72,7 +76,24 @@ def _handle_query(argv: list[str]) -> int:
 
 
 def _handle_config(argv: list[str]) -> int:
-    parser = argparse.ArgumentParser(prog=f"{PROGRAM_NAME} config")
+    parser = argparse.ArgumentParser(
+        prog=f"{PROGRAM_NAME} config",
+        description=(
+            "Inspect or update sql-agent-cli configuration.\n\n"
+            "Most query runs should not start here. The normal workflow is:\n"
+            f"  {PROGRAM_NAME} \"SELECT ...\"\n\n"
+            "Use config commands when you need to inspect targets, change the default\n"
+            "target, or bootstrap native auth files."
+        ),
+        epilog=(
+            "Examples:\n"
+            f"  {PROGRAM_NAME} config show\n"
+            f"  {PROGRAM_NAME} config set-default-target dev\n"
+            f"  {PROGRAM_NAME} config add-target reporting --engine postgres --host db.example.com --database app --user reader\n"
+            f"  {PROGRAM_NAME} config init-native-auth --engine postgres --target reporting"
+        ),
+        formatter_class=HelpFormatter,
+    )
     subparsers = parser.add_subparsers(dest="command")
 
     show_parser = subparsers.add_parser("show")
@@ -136,7 +157,15 @@ def _handle_config(argv: list[str]) -> int:
 
 
 def _handle_targets(argv: list[str]) -> int:
-    parser = argparse.ArgumentParser(prog=f"{PROGRAM_NAME} targets")
+    parser = argparse.ArgumentParser(
+        prog=f"{PROGRAM_NAME} targets",
+        description=(
+            "List configured targets and show which one is the default.\n\n"
+            "This is a quick inspection command. Query execution still happens through:\n"
+            f"  {PROGRAM_NAME} \"SELECT ...\""
+        ),
+        formatter_class=HelpFormatter,
+    )
     parser.add_argument("--format", choices=ADMIN_FORMAT_CHOICES, default="text")
     args = parser.parse_args(argv)
     config = load_config()
@@ -191,25 +220,108 @@ def _add_target_arguments(parser: argparse.ArgumentParser) -> None:
 
 
 def _build_query_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog=PROGRAM_NAME)
-    parser.add_argument("--target")
-    parser.add_argument("--engine", choices=ENGINE_CHOICES)
-    parser.add_argument("--host")
-    parser.add_argument("--port", type=int)
-    parser.add_argument("--database")
-    parser.add_argument("--user")
-    parser.add_argument("--path")
-    parser.add_argument("--format", choices=FORMAT_CHOICES)
-    parser.add_argument("--max-rows", type=int)
-    parser.add_argument("--connect-timeout-seconds", type=int)
-    parser.add_argument("--query-timeout-seconds", type=int)
-    parser.add_argument("--ssl-mode", choices=SSL_MODE_CHOICES)
-    parser.add_argument("--insecure", action="store_const", const="preferred")
-    parser.add_argument("--password-stdin", action="store_true")
-    parser.add_argument("--prompt-password", action="store_true")
-    parser.add_argument("--query")
-    parser.add_argument("--sql-file")
-    parser.add_argument("query_text", nargs="?")
+    parser = argparse.ArgumentParser(
+        prog=PROGRAM_NAME,
+        usage=(
+            f"{PROGRAM_NAME} \"SELECT ...\"\n"
+            f"  {PROGRAM_NAME} --target NAME \"SELECT ...\"\n"
+            f"  {PROGRAM_NAME} [connection options] \"SELECT ...\"\n"
+            f"  {PROGRAM_NAME} config --help"
+        ),
+        description=(
+            "Run one read-only SQL query and print deterministic output.\n\n"
+            "Happy path:\n"
+            f"  {PROGRAM_NAME} \"SELECT ...\"\n\n"
+            "By default, sql-agent-cli uses the configured default target/environment.\n"
+            "If a default target is already configured, the usual invocation is to pass\n"
+            "only the SQL query. Do not search for config files or environment details\n"
+            "first unless the query fails or you need a non-default target."
+        ),
+        epilog=(
+            "Target resolution:\n"
+            "  1. --target NAME\n"
+            "  2. [defaults].target from ~/.sql-agent-cli/config.toml\n"
+            "  3. An ephemeral target built from explicit connection flags\n\n"
+            "Query sources:\n"
+            "  Provide exactly one of: positional SQL, --query, --sql-file, or stdin.\n\n"
+            "Examples:\n"
+            f"  {PROGRAM_NAME} \"SELECT COUNT(*) AS total FROM users\"\n"
+            f"  {PROGRAM_NAME} --target reporting \"SELECT NOW()\"\n"
+            f"  {PROGRAM_NAME} --query \"SELECT id, name FROM users ORDER BY id LIMIT 10\"\n"
+            f"  {PROGRAM_NAME} --sql-file query.sql\n"
+            f"  Get-Content query.sql | {PROGRAM_NAME}\n"
+            f"  {PROGRAM_NAME} --engine sqlite --path C:\\data\\app.db \"SELECT * FROM customers LIMIT 5\"\n\n"
+            "Admin commands:\n"
+            f"  {PROGRAM_NAME} targets\n"
+            f"  {PROGRAM_NAME} config show\n"
+            f"  {PROGRAM_NAME} config set-default-target NAME"
+        ),
+        formatter_class=HelpFormatter,
+    )
+
+    target_group = parser.add_argument_group("Target and environment")
+    target_group.add_argument(
+        "--target",
+        metavar="NAME",
+        help="Use a named target. If omitted, the configured default target is used.",
+    )
+    target_group.add_argument(
+        "--engine",
+        choices=ENGINE_CHOICES,
+        help="Build an ephemeral one-off target. Usually unnecessary when a default target is configured.",
+    )
+    target_group.add_argument("--host", help="Override or define the database host for this run.")
+    target_group.add_argument("--port", type=int, help="Override or define the database port for this run.")
+    target_group.add_argument("--database", help="Override or define the database name for this run.")
+    target_group.add_argument("--user", help="Override or define the database user for this run.")
+    target_group.add_argument("--path", help="SQLite database path for this run.")
+
+    query_group = parser.add_argument_group("Query input")
+    query_group.add_argument("--query", metavar="SQL", help="SQL query text.")
+    query_group.add_argument("--sql-file", metavar="PATH", help="Read SQL query text from a file.")
+    query_group.add_argument(
+        "query_text",
+        nargs="?",
+        metavar="SQL",
+        help="SQL query text. This is the normal happy path: sql-agent-cli \"SELECT ...\"",
+    )
+
+    output_group = parser.add_argument_group("Output and guardrails")
+    output_group.add_argument("--format", choices=FORMAT_CHOICES, help="Output format. Defaults to config, then json.")
+    output_group.add_argument("--max-rows", type=int, help="Maximum rows to emit before truncating output.")
+    output_group.add_argument(
+        "--connect-timeout-seconds",
+        type=int,
+        help="Connection timeout override for this run.",
+    )
+    output_group.add_argument(
+        "--query-timeout-seconds",
+        type=int,
+        help="Query timeout override for this run.",
+    )
+    output_group.add_argument(
+        "--ssl-mode",
+        choices=SSL_MODE_CHOICES,
+        help="TLS behavior for network databases. Defaults to secure behavior.",
+    )
+    output_group.add_argument(
+        "--insecure",
+        action="store_const",
+        const="preferred",
+        help="Shorthand for --ssl-mode preferred.",
+    )
+
+    auth_group = parser.add_argument_group("Authentication")
+    auth_group.add_argument(
+        "--password-stdin",
+        action="store_true",
+        help="Read the password from stdin. Prefer native client auth when available.",
+    )
+    auth_group.add_argument(
+        "--prompt-password",
+        action="store_true",
+        help="Prompt interactively for a password.",
+    )
     return parser
 
 
