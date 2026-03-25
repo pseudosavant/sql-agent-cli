@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "sql-agent-cli"
-version = "0.9.1"
+version = "0.9.2"
 description = "Read-only SQL CLI for agentic workflows"
 readme = "README.md"
 license = "MIT"
