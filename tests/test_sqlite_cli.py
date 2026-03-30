@@ -13,6 +13,7 @@ from tests._bootstrap import bootstrap_package
 
 bootstrap_package()
 
+from sql_agent import __version__
 from sql_agent.cli import _build_query_parser, main
 
 
@@ -25,6 +26,29 @@ def _test_temp_dir(name: str) -> Path:
 
 
 class SqliteCliTests(unittest.TestCase):
+    def test_no_arguments_prints_help(self) -> None:
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+
+        with redirect_stdout(stdout), redirect_stderr(stderr):
+            exit_code = main([])
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(stderr.getvalue(), "")
+        self.assertIn('sql-agent-cli "SELECT ..."', stdout.getvalue())
+
+    def test_version_flag_prints_package_version(self) -> None:
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+
+        with redirect_stdout(stdout), redirect_stderr(stderr):
+            with self.assertRaises(SystemExit) as exc:
+                main(["-v"])
+
+        self.assertEqual(exc.exception.code, 0)
+        self.assertEqual(stderr.getvalue(), "")
+        self.assertEqual(stdout.getvalue().strip(), f"sql-agent-cli {__version__}")
+
     def test_help_emphasizes_default_target_happy_path(self) -> None:
         help_text = _build_query_parser().format_help()
 

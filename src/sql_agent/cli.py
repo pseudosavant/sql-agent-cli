@@ -6,6 +6,7 @@ import json
 import sys
 from pathlib import Path
 
+from . import __version__
 from .config import (
     build_show_payload,
     create_native_auth_template,
@@ -49,6 +50,9 @@ def main(argv: list[str] | None = None) -> int:
 
 def _handle_query(argv: list[str]) -> int:
     parser = _build_query_parser()
+    if not argv:
+        parser.print_help()
+        return 0
     args = parser.parse_args(argv)
 
     if args.password_stdin and args.prompt_password:
@@ -257,6 +261,12 @@ def _build_query_parser() -> argparse.ArgumentParser:
             f"  {PROGRAM_NAME} config set-default-target NAME"
         ),
         formatter_class=HelpFormatter,
+    )
+    parser.add_argument(
+        "-v",
+        "--version",
+        action="version",
+        version=f"%(prog)s {__version__}",
     )
 
     target_group = parser.add_argument_group("Target and environment")
