@@ -31,10 +31,11 @@ def execute_postgres_query(target: Target, sql: str) -> QueryExecutionResult:
         kwargs["password"] = target.password
     if target.ssl_mode:
         kwargs["sslmode"] = SSL_MODE_MAP[target.ssl_mode]
+    options = ["-c default_transaction_read_only=on"]
     if target.query_timeout_seconds:
-        kwargs["options"] = f"-c statement_timeout={target.query_timeout_seconds * 1000}"
+        options.append(f"-c statement_timeout={target.query_timeout_seconds * 1000}")
+    kwargs["options"] = " ".join(options)
 
-    with psycopg.connect(**kwargs) as connection:
-        with connection.cursor() as cursor:
-            cursor.execute(sql)
-            return fetch_limited_rows(cursor, target.max_rows or 200)
+    with psycopg.connect(**kwargs) as connection, connection.cursor() as cursor:
+        cursor.execute(sql)
+        return fetch_limited_rows(cursor, target.max_rows or 200)

@@ -11,7 +11,9 @@ from uuid import UUID
 from .models import QueryExecutionResult, Target, ValidatedQuery
 
 
-def render_output(fmt: str, target: Target, query: ValidatedQuery, result: QueryExecutionResult) -> str:
+def render_output(
+    fmt: str, target: Target, query: ValidatedQuery, result: QueryExecutionResult
+) -> str:
     normalized = fmt.lower()
     if normalized == "json":
         return render_json(target, query, result)
@@ -24,7 +26,9 @@ def render_output(fmt: str, target: Target, query: ValidatedQuery, result: Query
     raise ValueError(f"Unsupported format: {fmt}")
 
 
-def render_json(target: Target, query: ValidatedQuery, result: QueryExecutionResult) -> str:
+def render_json(
+    target: Target, query: ValidatedQuery, result: QueryExecutionResult
+) -> str:
     payload = {
         "target": target.public_dict(),
         "query": {
@@ -51,7 +55,9 @@ def render_csv(result: QueryExecutionResult) -> str:
     return buffer.getvalue()
 
 
-def render_markdown(target: Target, query: ValidatedQuery, result: QueryExecutionResult) -> str:
+def render_markdown(
+    target: Target, query: ValidatedQuery, result: QueryExecutionResult
+) -> str:
     lines = [
         f"# Query Result ({target.name})",
         "",
@@ -65,7 +71,9 @@ def render_markdown(target: Target, query: ValidatedQuery, result: QueryExecutio
     return "\n".join(lines).rstrip() + "\n"
 
 
-def render_table(target: Target, query: ValidatedQuery, result: QueryExecutionResult) -> str:
+def render_table(
+    target: Target, query: ValidatedQuery, result: QueryExecutionResult
+) -> str:
     lines = [
         f"Target: {target.name} ({target.engine})",
         f"Statement: {query.statement_type}",
@@ -124,7 +132,57 @@ def render_config_show_text(payload: dict[str, object]) -> str:
     lines.append("Targets")
     lines.append(
         _render_grid(
-            ["default", "name", "engine", "location", "identity", "ssl", "credentials", "ready"],
+            [
+                "default",
+                "name",
+                "engine",
+                "location",
+                "identity",
+                "ssl",
+                "credentials",
+                "ready",
+            ],
+            rows,
+        )
+    )
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def render_config_check_text(payload: dict[str, object]) -> str:
+    lines = [
+        "Target Checks",
+        f"Checked: {payload.get('checked', 0)}",
+        f"Succeeded: {payload.get('succeeded', 0)}",
+        f"Failed: {payload.get('failed', 0)}",
+        "",
+    ]
+    results = payload.get("results", [])
+    if not isinstance(results, list) or not results:
+        lines.append("(none)")
+        return "\n".join(lines).rstrip() + "\n"
+
+    rows: list[tuple[object, ...]] = []
+    for item in results:
+        if not isinstance(item, dict):
+            continue
+        target = item.get("target", {})
+        target = target if isinstance(target, dict) else {}
+        error = item.get("error")
+        error_message = error.get("message", "") if isinstance(error, dict) else ""
+        rows.append(
+            (
+                target.get("name", "-"),
+                target.get("engine", "-"),
+                str(item.get("status", "unknown")).upper(),
+                _target_location(target),
+                _credential_summary(item.get("credential_hints", {})),
+                "yes" if item.get("can_attempt_connection") else "no",
+                error_message,
+            )
+        )
+    lines.append(
+        _render_grid(
+            ["name", "engine", "status", "location", "credentials", "ready", "error"],
             rows,
         )
     )
@@ -154,7 +212,9 @@ def render_targets_text(payload: dict[str, object]) -> str:
                 target.get("ssl_mode", ""),
             )
         )
-    lines.append(_render_grid(["default", "name", "engine", "location", "identity", "ssl"], rows))
+    lines.append(
+        _render_grid(["default", "name", "engine", "location", "identity", "ssl"], rows)
+    )
     return "\n".join(lines).rstrip() + "\n"
 
 
@@ -187,7 +247,13 @@ def _render_grid(columns: list[str], rows: list[tuple[object, ...]]) -> str:
             widths[index] = max(widths[index], len(value))
 
     def format_row(values: list[str]) -> str:
-        return "| " + " | ".join(values[index].ljust(widths[index]) for index in range(len(values))) + " |"
+        return (
+            "| "
+            + " | ".join(
+                values[index].ljust(widths[index]) for index in range(len(values))
+            )
+            + " |"
+        )
 
     divider = "| " + " | ".join("-" * width for width in widths) + " |"
     lines = [format_row(columns), divider]
@@ -222,7 +288,9 @@ def _credential_summary(hints: object) -> str:
         return "-"
     if "option_file_candidates" in hints:
         candidates = hints.get("option_file_candidates", [])
-        if isinstance(candidates, list) and any(isinstance(item, dict) and item.get("exists") for item in candidates):
+        if isinstance(candidates, list) and any(
+            isinstance(item, dict) and item.get("exists") for item in candidates
+        ):
             return "option-file"
         return "missing option-file"
     if "pgpass_candidates" in hints:
@@ -231,7 +299,9 @@ def _credential_summary(hints: object) -> str:
         has_pgpass = isinstance(pgpass, list) and any(
             isinstance(item, dict) and item.get("exists") for item in pgpass
         )
-        has_env = isinstance(env_vars, dict) and any(bool(value) for value in env_vars.values())
+        has_env = isinstance(env_vars, dict) and any(
+            bool(value) for value in env_vars.values()
+        )
         if has_pgpass and has_env:
             return "pgpass + env"
         if has_pgpass:

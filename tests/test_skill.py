@@ -27,7 +27,9 @@ class SkillTests(unittest.TestCase):
             self.assertTrue(first["updated"])
             self.assertEqual(skill_path.read_text(encoding="utf-8"), SKILL_MD)
 
-            skill_path.write_text("---\nname: sql-agent-cli\n---\ncustom\n", encoding="utf-8")
+            skill_path.write_text(
+                "---\nname: sql-agent-cli\n---\ncustom\n", encoding="utf-8"
+            )
             second = install_skill(skills_root)
             self.assertTrue(second["updated"])
             self.assertEqual(skill_path.read_text(encoding="utf-8"), SKILL_MD)
@@ -45,9 +47,14 @@ class SkillTests(unittest.TestCase):
         self.assertIn("response guardrails, not database-work limits", SKILL_MD)
         self.assertIn("When `truncated` is `true`", SKILL_MD)
         self.assertIn("## Recover From Failures", SKILL_MD)
+        self.assertIn("config check --format json", SKILL_MD)
+        self.assertIn("Do not run this preflight before a normal first query", SKILL_MD)
         self.assertIn("$sql-agent-cli", SKILL_MD)
         self.assertIn("--password-stdin", SKILL_MD)
         self.assertIn("--insecure", SKILL_MD)
+        self.assertIn("dedicated database roles", SKILL_MD)
+        self.assertIn("requires encrypted transport", SKILL_MD)
+        self.assertIn("native trust configuration", SKILL_MD)
         self.assertIn(MANAGED_MARKER, SKILL_MD)
         self.assertNotIn("Codex", SKILL_MD)
         self.assertNotIn("powershell", SKILL_MD.lower())

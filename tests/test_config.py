@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import io
 import json
+import shutil
+import sqlite3
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
-import shutil
 from uuid import uuid4
 
 from tests._bootstrap import bootstrap_package
@@ -15,7 +16,7 @@ bootstrap_package()
 
 from sql_agent import config
 from sql_agent.cli import main as cli_main
-from sql_agent.models import AppConfig, Defaults, Target
+from sql_agent.models import AppConfig, Defaults, QueryExecutionResult, Target
 
 
 def _test_temp_dir(name: str) -> Path:
@@ -45,9 +46,12 @@ class ConfigTests(unittest.TestCase):
         stdout = io.StringIO()
         stderr = io.StringIO()
         payload = config.build_show_payload(app_config)
-        with patch("sql_agent.cli.load_config", return_value=app_config), patch(
-            "sql_agent.cli.build_show_payload", return_value=payload
-        ), patch("sys.stdout", stdout), patch("sys.stderr", stderr):
+        with (
+            patch("sql_agent.cli.load_config", return_value=app_config),
+            patch("sql_agent.cli.build_show_payload", return_value=payload),
+            patch("sys.stdout", stdout),
+            patch("sys.stderr", stderr),
+        ):
             exit_code = cli_main(["config", "show"])
 
         self.assertEqual(exit_code, 0)
@@ -64,8 +68,10 @@ class ConfigTests(unittest.TestCase):
         )
         stdout = io.StringIO()
         stderr = io.StringIO()
-        with patch("sql_agent.cli.load_config", return_value=app_config), patch("sys.stdout", stdout), patch(
-            "sys.stderr", stderr
+        with (
+            patch("sql_agent.cli.load_config", return_value=app_config),
+            patch("sys.stdout", stdout),
+            patch("sys.stderr", stderr),
         ):
             exit_code = cli_main(["targets", "--format", "json"])
 
@@ -75,9 +81,108 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(payload["default_target"], "dev")
         self.assertEqual(payload["targets"][0]["engine"], "sqlite")
 
+    def test_config_check_tests_default_target_and_returns_json(self) -> None:
+        temp_dir = _test_temp_dir("config-check")
+        self.addCleanup(lambda: shutil.rmtree(temp_dir, ignore_errors=True))
+        db_path = temp_dir / "check.db"
+        sqlite3.connect(db_path).close()
+        app_config = AppConfig(
+            defaults=Defaults(target="local"),
+            targets={"local": Target(name="local", engine="sqlite", path=str(db_path))},
+        )
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with (
+            patch("sql_agent.cli.load_config", return_value=app_config),
+            patch("sys.stdout", stdout),
+            patch("sys.stderr", stderr),
+        ):
+            exit_code = cli_main(["config", "check", "--format", "json"])
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(stderr.getvalue(), "")
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["checked"], 1)
+        self.assertEqual(payload["succeeded"], 1)
+        self.assertEqual(payload["failed"], 0)
+        self.assertEqual(payload["results"][0]["status"], "ok")
+        self.assertEqual(payload["results"][0]["target"]["name"], "local")
+        self.assertTrue(payload["results"][0]["credential_hints"]["path_exists"])
+
+    def test_config_check_all_reports_each_failure_and_returns_runtime_exit_code(
+        self,
+    ) -> None:
+        app_config = AppConfig(
+            defaults=Defaults(target="good"),
+            targets={
+                "bad": Target(
+                    name="bad",
+                    engine="postgres",
+                    host="bad.example.com",
+                    password="do-not-print",
+                ),
+                "good": Target(name="good", engine="mysql", host="good.example.com"),
+            },
+        )
+
+        def execute_check(target: Target, sql: str) -> QueryExecutionResult:
+            self.assertEqual(sql, "SELECT 1 AS sql_agent_cli_check")
+            if target.name == "bad":
+                raise RuntimeError(
+                    "connection failed\nwithout exposing credentials; password=do-not-print"
+                )
+            return QueryExecutionResult(
+                columns=["sql_agent_cli_check"],
+                rows=[(1,)],
+                returned_row_count=1,
+                truncated=False,
+            )
+
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with (
+            patch("sql_agent.cli.load_config", return_value=app_config),
+            patch("sql_agent.cli._execute_query", side_effect=execute_check),
+            patch("sys.stdout", stdout),
+            patch("sys.stderr", stderr),
+        ):
+            exit_code = cli_main(["config", "check", "--all", "--format", "json"])
+
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(stderr.getvalue(), "")
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["checked"], 2)
+        self.assertEqual(payload["succeeded"], 1)
+        self.assertEqual(payload["failed"], 1)
+        self.assertEqual(
+            [item["status"] for item in payload["results"]], ["error", "ok"]
+        )
+        self.assertEqual(
+            payload["results"][0]["error"]["message"],
+            "connection failed without exposing credentials; password=<redacted>",
+        )
+        self.assertNotIn("do-not-print", stdout.getvalue())
+
+    def test_config_check_requires_a_selected_target(self) -> None:
+        app_config = AppConfig(defaults=Defaults(), targets={})
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with (
+            patch("sql_agent.cli.load_config", return_value=app_config),
+            patch("sys.stdout", stdout),
+            patch("sys.stderr", stderr),
+        ):
+            exit_code = cli_main(["config", "check"])
+
+        self.assertEqual(exit_code, 2)
+        self.assertEqual(stdout.getvalue(), "")
+        self.assertIn("No target selected", stderr.getvalue())
+
     def test_resolve_target_uses_default_target_and_defaults(self) -> None:
         app_config = AppConfig(
-            defaults=Defaults(target="dev", format="json", max_rows=25, connect_timeout_seconds=9),
+            defaults=Defaults(
+                target="dev", format="json", max_rows=25, connect_timeout_seconds=9
+            ),
             targets={
                 "dev": Target(
                     name="dev",
@@ -112,7 +217,9 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(target.max_rows, 25)
         self.assertEqual(target.connect_timeout_seconds, 9)
 
-    def test_explicit_engine_builds_ephemeral_target_instead_of_merging_default(self) -> None:
+    def test_explicit_engine_builds_ephemeral_target_instead_of_merging_default(
+        self,
+    ) -> None:
         app_config = AppConfig(
             defaults=Defaults(target="dev", max_rows=25),
             targets={
@@ -188,7 +295,9 @@ class ConfigTests(unittest.TestCase):
             port=3306,
             user="reader",
         )
-        with patch("sql_agent.config.preferred_mysql_option_file_path", return_value=temp_path):
+        with patch(
+            "sql_agent.config.preferred_mysql_option_file_path", return_value=temp_path
+        ):
             created = config.create_native_auth_template("mysql", target)
 
         self.assertEqual(created, temp_path)
@@ -202,6 +311,10 @@ class ConfigTests(unittest.TestCase):
         self.addCleanup(lambda: shutil.rmtree(temp_dir, ignore_errors=True))
         temp_path = temp_dir / "pgpass.conf"
         temp_path.write_text("existing", encoding="utf-8")
-        with patch("sql_agent.config.preferred_postgres_auth_path", return_value=temp_path):
-            with self.assertRaises(FileExistsError):
-                config.create_native_auth_template("postgres", None)
+        with (
+            patch(
+                "sql_agent.config.preferred_postgres_auth_path", return_value=temp_path
+            ),
+            self.assertRaises(FileExistsError),
+        ):
+            config.create_native_auth_template("postgres", None)

@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, fields
 from typing import Any
 
-
 NETWORK_ENGINES = {"mysql", "mariadb", "postgres"}
 
 
@@ -34,16 +33,18 @@ class Target:
     query_timeout_seconds: int | None = None
     password: str | None = None
 
-    def merged(self, overlay: "Target | None") -> "Target":
+    def merged(self, overlay: Target | None) -> Target:
         if overlay is None:
             return Target(**asdict(self))
         merged: dict[str, Any] = {}
         for field in fields(self):
             value = getattr(overlay, field.name)
-            merged[field.name] = value if value is not None else getattr(self, field.name)
+            merged[field.name] = (
+                value if value is not None else getattr(self, field.name)
+            )
         return Target(**merged)
 
-    def with_defaults(self, defaults: Defaults) -> "Target":
+    def with_defaults(self, defaults: Defaults) -> Target:
         copy = Target(**asdict(self))
         if copy.max_rows is None:
             copy.max_rows = defaults.max_rows

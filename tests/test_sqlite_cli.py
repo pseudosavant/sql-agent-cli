@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import io
 import json
+import shutil
 import sqlite3
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
-import shutil
 from uuid import uuid4
 
 from tests._bootstrap import bootstrap_package
@@ -41,20 +41,44 @@ class SqliteCliTests(unittest.TestCase):
         stdout = io.StringIO()
         stderr = io.StringIO()
 
-        with redirect_stdout(stdout), redirect_stderr(stderr):
-            with self.assertRaises(SystemExit) as exc:
-                main(["-v"])
+        with (
+            redirect_stdout(stdout),
+            redirect_stderr(stderr),
+            self.assertRaises(SystemExit) as exc,
+        ):
+            main(["-v"])
 
         self.assertEqual(exc.exception.code, 0)
         self.assertEqual(stderr.getvalue(), "")
         self.assertEqual(stdout.getvalue().strip(), f"sql-agent-cli {__version__}")
+
+    def test_about_prints_version_summary_project_and_license(self) -> None:
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+
+        with redirect_stdout(stdout), redirect_stderr(stderr):
+            exit_code = main(["--about"])
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(stderr.getvalue(), "")
+        self.assertEqual(
+            stdout.getvalue().splitlines(),
+            [
+                f"sql-agent-cli {__version__}",
+                "Read-only SQL CLI for agentic workflows",
+                "Project: https://github.com/pseudosavant/sql-agent-cli",
+                "License: MIT",
+            ],
+        )
 
     def test_help_emphasizes_default_target_happy_path(self) -> None:
         help_text = _build_query_parser().format_help()
 
         self.assertIn('sql-agent-cli "SELECT ..."', help_text)
         self.assertIn("the configured default target/environment", help_text)
-        self.assertIn("Do not search for config files or environment details first", help_text)
+        self.assertIn(
+            "Do not search for config files or environment details first", help_text
+        )
         self.assertIn("[defaults].target from ~/.sql-agent-cli/config.toml", help_text)
 
     def test_sqlite_query_returns_json_payload(self) -> None:

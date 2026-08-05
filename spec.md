@@ -1,4 +1,4 @@
-# Spec Draft: `sql-agent-cli` v1
+# Release Candidate Spec: `sql-agent-cli` v1
 
 ## Purpose
 
@@ -21,6 +21,11 @@ Secondary audience:
 License:
 
 - MIT
+
+Release status:
+
+- 0.12.0 is the final pre-1.0 release candidate.
+- The documented CLI, config, JSON, stdout/stderr, and exit-code behavior in this spec is the intended 1.0 public contract.
 
 ---
 
@@ -242,7 +247,9 @@ V1 should not require `--password` as a normal CLI argument.
 ```text
 sql-agent-cli "SELECT ..."
 sql-agent-cli --target NAME "SELECT ..."
+sql-agent-cli --about
 sql-agent-cli config show
+sql-agent-cli config check [--target NAME | --all] [--format text|json]
 sql-agent-cli config set-default-target NAME
 sql-agent-cli config add-target NAME [options]
 sql-agent-cli config remove-target NAME
@@ -261,7 +268,7 @@ Compatibility requirement:
 
 `sql-agent-cli install-skill` should install or update a managed `$sql-agent-cli` skill at `~/.agents/skills/sql-agent-cli/SKILL.md` by default. `--skills-dir PATH` should allow a different skills root.
 
-Installation should be idempotent, replace stale skill content with the version bundled by the CLI, and emit a deterministic JSON result. The skill should document the default-target happy path, read-only boundary, supported query sources, structured output handling, native credential preference, and secure TLS behavior.
+Installation should be idempotent, replace stale skill content with the version bundled by the CLI, and emit a deterministic JSON result. The skill should use `uvx sql-agent-cli`, document the default-target happy path, read-only boundary, least-privilege database roles, supported query sources, structured output handling, native credential preference, exact TLS behavior, and one-time `config check` troubleshooting after connection failures without requiring preflight checks before normal queries.
 
 `sql-agent-cli remove-skill` should remove only content carrying the tool's managed marker unless `--force` is supplied. Removing a missing skill should succeed with a deterministic `not_installed` JSON result.
 
@@ -273,7 +280,7 @@ Installation should be idempotent, replace stale skill content with the version 
 
 V1 must execute exactly one SQL statement per invocation.
 
-Recommended behavior:
+Required behavior:
 
 1. allow a single trailing semicolon and strip it before validation
 2. reject multiple statements
@@ -354,8 +361,12 @@ Where the underlying driver/database supports a true read-only connection mode, 
 
 Examples:
 
-1. SQLite connections should be opened in read-only mode when possible.
-2. MySQL/MariaDB should use the strongest practical read-only session settings the driver supports, but SQL validation remains the primary safety boundary.
+1. SQLite connections must be opened in read-only mode.
+2. PostgreSQL connections must set `default_transaction_read_only=on` for the session.
+3. MySQL/MariaDB connections must run `SET SESSION TRANSACTION READ ONLY` before user SQL.
+4. Integration tests must bypass parser validation and prove that PostgreSQL and MySQL reject a write at the session layer.
+5. These controls are defense in depth. Targets should use dedicated database identities with only the required read and metadata privileges.
+6. Stored functions, extensions, temporary objects, server configuration, and privileged database roles can weaken assumptions made from SQL text alone.
 
 ---
 
@@ -409,7 +420,7 @@ Recommended top-level structure:
 }
 ```
 
-The exact field names may change during implementation, but the payload should include:
+The top-level `target`, `query`, and `result` objects and the documented fields above are stable public fields. Compatible releases may add fields, but must not remove or reinterpret existing fields without a major version change. The payload includes:
 
 1. resolved target metadata with secrets omitted
 2. normalized query text
@@ -437,6 +448,13 @@ Row count semantics:
 1. `markdown` should render a stable prompt-friendly table plus a short metadata header.
 2. `table` should optimize for terminal readability.
 3. `csv` should emit raw CSV payload only, with no explanatory text on stdout.
+
+## Stream behavior
+
+1. Successful query payloads are written to stdout.
+2. Diagnostics and errors are written to stderr.
+3. Failed normal queries do not emit partial stdout payloads.
+4. `config check --format json` is the deliberate exception: it emits a complete diagnostic payload on stdout and returns exit code `1` if any selected target fails.
 
 ---
 
@@ -576,7 +594,7 @@ Rationale:
 
 ## SSL behavior
 
-Recommended behavior:
+Required behavior:
 
 1. default to `ssl_mode = "required"` for MySQL and MariaDB targets
 2. default to `ssl_mode = "required"` for PostgreSQL targets
@@ -587,6 +605,10 @@ Recommended behavior:
 7. support a CLI `--insecure` shorthand that means `--ssl-mode preferred`
 8. support an explicit less-secure override when needed, such as `--ssl-mode disabled`
 9. `--insecure` should not modify config permanently
+10. `required` must fail if encrypted transport is not negotiated
+11. `preferred` attempts TLS but permits a plaintext fallback
+12. `disabled` prohibits TLS
+13. `required` guarantees transport encryption, not certificate identity verification by itself; CA and hostname verification depend on native client trust configuration
 
 Rationale:
 
@@ -598,6 +620,7 @@ Recommended commands:
 
 ```text
 sql-agent-cli config show
+sql-agent-cli config check [--target NAME | --all] [--format text|json]
 sql-agent-cli config set-default-target NAME
 sql-agent-cli config add-target NAME --engine mysql --host HOST --port 3306 --database DB --user USER
 sql-agent-cli config add-target NAME --engine postgres --host HOST --port 5432 --database DB --user USER
@@ -611,8 +634,12 @@ Behavior requirements:
 
 1. `config show` displays the effective defaults and configured targets with credential sources described but secrets redacted
 2. `config show` should indicate whether each target is complete enough to run
-3. config-writing commands create the file if it does not exist
-4. config-writing commands preserve unrelated existing settings where practical
+3. `config check` defaults to the configured default target, `--target NAME` checks one named target, and `--all` is required to contact every configured target
+4. `config check` executes only an internal `SELECT 1`, returns non-secret target and credential-source diagnostics, and supports text and JSON output
+5. `config check --all` continues after individual failures and returns exit code `1` if any selected target fails
+6. normal queries do not require a successful preflight check
+7. config-writing commands create the file if it does not exist
+8. only documented config fields are supported; unknown fields are ignored on read and may be removed when a config-writing command rewrites the file
 
 ## Native auth template helpers
 
@@ -745,11 +772,21 @@ Behavior:
 
 ## Exit codes
 
-Recommended contract:
+Public contract:
 
 1. `0` success
 2. `1` runtime, connection, driver, or query execution failure
 3. `2` usage or validation error
+
+## Versioning and deprecation
+
+Starting with 1.0.0, semantic versioning applies to the documented command line, config schema, JSON fields, stdout/stderr behavior, and exit codes.
+
+1. patch releases contain compatible fixes and security updates
+2. minor releases may add backward-compatible commands, options, config fields, and JSON fields
+3. intended incompatible changes require a major release
+4. when practical, deprecated interfaces should warn for at least one minor release before removal
+5. urgent security fixes may require faster changes and must be called out explicitly in release notes
 
 ---
 
@@ -794,6 +831,8 @@ Release expectations:
 1. `uv build --no-sources`
 2. publish via `uv publish` or a GitHub Actions workflow
 3. prefer PyPI Trusted Publishing over long-lived API tokens
+4. run no-network tests on supported Python versions
+5. run opt-in integration tests against real PostgreSQL and MySQL service containers before building release artifacts
 
 ---
 
@@ -806,6 +845,7 @@ The README should include:
 3. config file examples for MySQL, PostgreSQL, and SQLite
 4. examples showing `.pgpass`, MySQL option files, `config init-native-auth --target NAME`, and `--password-stdin`
 5. a clear statement that v1 is read-only by design
+6. `config check` troubleshooting and `--about` metadata examples
 
 ---
 

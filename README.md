@@ -13,7 +13,7 @@ V1 targets:
 
 ## Status
 
-This repo is currently under active development.
+Version 0.12.0 is the final pre-1.0 release candidate. Its public command, config, JSON, and exit-code contracts are being frozen for 1.0; incompatible changes found during release-candidate testing will be documented.
 
 The current behavior target is defined in [`spec.md`](./spec.md).
 
@@ -30,6 +30,7 @@ Packaged command target:
 
 ```text
 uvx sql-agent-cli --help
+uvx sql-agent-cli --about
 sql-agent-cli "SELECT 1"
 ```
 
@@ -161,6 +162,7 @@ Config commands:
 
 ```text
 sql-agent-cli config show
+sql-agent-cli config check [--target NAME | --all] [--format text|json]
 sql-agent-cli config set-default-target NAME
 sql-agent-cli config add-target NAME [options]
 sql-agent-cli config remove-target NAME
@@ -170,6 +172,22 @@ sql-agent-cli targets
 ```
 
 `config show` displays effective target settings and credential-source hints without revealing secrets.
+
+Validate the default target with a safe internal `SELECT 1` after a setup, connection, authentication, or TLS failure:
+
+```text
+uvx sql-agent-cli config check --format json
+```
+
+Use `--target NAME` to check one named target or `--all` to check every configured target. The command reports non-secret target settings, credential-source availability, and connection status. It returns exit code `1` if any selected target fails. Normal queries should still use the default-target happy path without a mandatory preflight check.
+
+## Project metadata
+
+Show the installed version, summary, project URL, and license:
+
+```text
+uvx sql-agent-cli --about
+```
 
 ## Agent skill
 
@@ -204,7 +222,50 @@ Default format:
 
 - `json`
 
-Stdout is reserved for payload output. Diagnostics and errors go to stderr.
+Stdout is reserved for payload output. Diagnostics and errors go to stderr. Normal query failures emit no stdout payload. `config check --format json` is the intentional exception: it emits its complete diagnostic payload on stdout and returns `1` when any selected target fails.
+
+Successful JSON query output has these stable top-level objects:
+
+```json
+{
+  "target": {},
+  "query": {},
+  "result": {
+    "columns": [],
+    "rows": [],
+    "returned_row_count": 0,
+    "truncated": false
+  }
+}
+```
+
+Target metadata never includes passwords. Dates and datetimes are ISO 8601 strings, decimals are strings, bytes are base64 strings, and SQL `NULL` is JSON `null`.
+
+`config check --format json` has stable summary fields and one result per selected target:
+
+```json
+{
+  "checked": 1,
+  "succeeded": 1,
+  "failed": 0,
+  "results": [
+    {
+      "target": {},
+      "credential_hints": {},
+      "can_attempt_connection": true,
+      "status": "ok"
+    }
+  ]
+}
+```
+
+Failed result objects use `status: "error"` and add `error.type` and `error.message` without exposing configured passwords.
+
+Exit codes are part of the public contract:
+
+- `0`: success
+- `1`: runtime, connection, driver, timeout, or query-execution failure
+- `2`: command usage or SQL validation failure
 
 ## Read-only guarantee
 
@@ -218,18 +279,35 @@ Intended allowed statement classes include:
 - `DESCRIBE` / `DESC`
 - `EXPLAIN`
 
-The tool rejects mutating or administrative statements before execution and executes exactly one statement per invocation.
+The tool rejects mutating or administrative statements before execution and executes exactly one statement per invocation. SQLite `PRAGMA` queries are limited to an explicit read-only allowlist.
+
+The safety model has multiple layers:
+
+- parser-backed validation rejects writes, stacked statements, locking reads, unsafe functions, and mutating SQLite pragmas before connecting
+- PostgreSQL and MySQL/MariaDB sessions are configured read-only
+- SQLite files are opened in read-only mode
+- query timeouts and row limits bound execution and output
+
+These controls are defense in depth, not a substitute for database authorization. Configure targets with dedicated database roles granted only the read and metadata privileges they actually need.
 
 ## SSL
 
-Secure defaults are required by default for network databases.
+Encrypted transport is required by default for network databases.
 
 Supported model:
 
-- `--ssl-mode required`
-- `--ssl-mode preferred`
-- `--ssl-mode disabled`
+- `--ssl-mode required`: require TLS and fail if encryption is not negotiated
+- `--ssl-mode preferred`: attempt TLS but allow a plaintext fallback
+- `--ssl-mode disabled`: prohibit TLS
 - `--insecure` as shorthand for `--ssl-mode preferred`
+
+`required` guarantees encryption, not certificate identity verification by itself. Certificate authority and hostname verification depend on the PostgreSQL or MySQL native client trust configuration. Keep `required` unless the user explicitly accepts weaker transport behavior.
+
+## Compatibility policy
+
+The supported config schema consists of the `[defaults]` and `[targets.NAME]` fields shown above. Unknown fields are ignored when reading and may be removed by config-writing commands, so do not use this file as an extension store.
+
+Starting with 1.0.0, this project follows semantic versioning for the documented CLI, config, JSON, stdout/stderr, and exit-code contracts. Additive compatible behavior ships in minor releases; intended breaking changes require a major release. When practical, a deprecated interface will warn for at least one minor release before removal. Security fixes may require faster changes and will be called out explicitly.
 
 ## Development direction
 
@@ -239,6 +317,31 @@ Implementation choices currently targeted by the spec:
 - `psycopg[binary]` for PostgreSQL
 - stdlib `sqlite3` for SQLite
 - `sqlglot` for parser-backed SQL validation
+
+## Testing
+
+Run the no-network test suite:
+
+```text
+uv run --locked python -m unittest discover -v
+```
+
+CI runs the no-network suite on Python 3.11, 3.12, and 3.13 on Linux, with an additional Python 3.13 Windows job. It also runs opt-in integration tests against real PostgreSQL and MySQL service containers, including direct checks that the database sessions reject writes even when SQL validation is bypassed.
+
+To run the network tests against local test databases, set `SQL_AGENT_CLI_INTEGRATION=1` and provide `HOST`, `PORT`, `DATABASE`, `USER`, and `PASSWORD` variables under both the `SQL_AGENT_CLI_POSTGRES_*` and `SQL_AGENT_CLI_MYSQL_*` prefixes:
+
+```text
+uv run --locked python -m unittest tests.test_network_integration tests.test_read_only_integration -v
+```
+
+Run the pinned lint baseline with:
+
+```text
+uvx ruff==0.16.1 check .
+uvx ruff==0.16.1 format --check .
+```
+
+See [`SECURITY.md`](./SECURITY.md) for the security model and vulnerability-reporting guidance, and [`CHANGELOG.md`](./CHANGELOG.md) for release changes.
 
 ## License
 

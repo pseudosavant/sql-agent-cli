@@ -22,7 +22,67 @@ class QueryValidationError(SqlAgentError):
     exit_code = 2
 
 
-DISALLOWED_FUNCTIONS = {"SLEEP", "BENCHMARK", "LOAD_FILE"}
+class QueryExecutionError(SqlAgentError):
+    exit_code = 1
+
+
+DISALLOWED_FUNCTIONS = {
+    "BENCHMARK",
+    "GET_LOCK",
+    "LOAD_FILE",
+    "LO_EXPORT",
+    "LO_IMPORT",
+    "PG_LS_DIR",
+    "PG_READ_BINARY_FILE",
+    "PG_READ_FILE",
+    "PG_STAT_FILE",
+    "RELEASE_ALL_LOCKS",
+    "RELEASE_LOCK",
+    "SLEEP",
+}
+DISALLOWED_FUNCTION_PREFIXES = (
+    "PG_ADVISORY_LOCK",
+    "PG_ADVISORY_UNLOCK",
+    "PG_ADVISORY_XACT_LOCK",
+    "PG_TRY_ADVISORY_LOCK",
+    "PG_TRY_ADVISORY_XACT_LOCK",
+)
+READ_ONLY_SQLITE_PRAGMAS = {
+    "application_id",
+    "collation_list",
+    "compile_options",
+    "database_list",
+    "encoding",
+    "foreign_key_check",
+    "foreign_key_list",
+    "foreign_keys",
+    "freelist_count",
+    "function_list",
+    "index_info",
+    "index_list",
+    "index_xinfo",
+    "integrity_check",
+    "module_list",
+    "page_count",
+    "pragma_list",
+    "quick_check",
+    "schema_version",
+    "table_info",
+    "table_list",
+    "table_xinfo",
+    "user_version",
+}
+SQLITE_PRAGMAS_WITH_READ_ARGUMENTS = {
+    "foreign_key_check",
+    "foreign_key_list",
+    "index_info",
+    "index_list",
+    "index_xinfo",
+    "integrity_check",
+    "quick_check",
+    "table_info",
+    "table_xinfo",
+}
 DISALLOWED_NODES = [
     "Alter",
     "Analyze",
@@ -64,9 +124,13 @@ def get_query_text(args: Any, stdin_text: str | None) -> str:
     ]
     present = [(name, value) for name, value in sources if value]
     if len(present) > 1:
-        raise UsageError("Provide exactly one query source: positional SQL, --query, --sql-file, or stdin.")
+        raise UsageError(
+            "Provide exactly one query source: positional SQL, --query, --sql-file, or stdin."
+        )
     if not present:
-        raise UsageError("No query provided. Pass a SQL string, --query, --sql-file, or stdin.")
+        raise UsageError(
+            "No query provided. Pass a SQL string, --query, --sql-file, or stdin."
+        )
 
     source_name, source_value = present[0]
     if source_name == "file":
@@ -77,7 +141,9 @@ def get_query_text(args: Any, stdin_text: str | None) -> str:
 def validate_query(sql: str, engine: str | None) -> ValidatedQuery:
     normalized = sql.strip()
     if not normalized:
-        raise QueryValidationError("Empty query. Provide a single read-only SQL statement.")
+        raise QueryValidationError(
+            "Empty query. Provide a single read-only SQL statement."
+        )
     if normalized.endswith(";"):
         normalized = normalized[:-1].rstrip()
 
@@ -87,11 +153,15 @@ def validate_query(sql: str, engine: str | None) -> ValidatedQuery:
         raise QueryValidationError(f"SQL parse error: {exc}") from exc
 
     if len(parsed) != 1:
-        raise QueryValidationError("Exactly one SQL statement is allowed per invocation.")
+        raise QueryValidationError(
+            "Exactly one SQL statement is allowed per invocation."
+        )
 
     expression = parsed[0]
     if not _is_allowed_root(expression, engine):
-        raise QueryValidationError("Only read-only SELECT/SHOW/DESCRIBE/EXPLAIN statements are allowed.")
+        raise QueryValidationError(
+            "Only read-only SELECT/SHOW/DESCRIBE/EXPLAIN statements are allowed."
+        )
 
     _reject_disallowed_nodes(expression)
     _reject_disallowed_functions(expression)
@@ -137,35 +207,63 @@ def _is_allowed_root(expression: exp.Expression, engine: str | None) -> bool:
         return True
     if explain_type and isinstance(expression, explain_type):
         return True
-    if normalize_engine(engine) == "sqlite" and pragma_type and isinstance(expression, pragma_type):
+    if (
+        normalize_engine(engine) == "sqlite"
+        and pragma_type
+        and isinstance(expression, pragma_type)
+    ):
+        _validate_sqlite_pragma(expression)
         return True
     return False
+
+
+def _validate_sqlite_pragma(expression: exp.Expression) -> None:
+    pragma = expression.this
+    if isinstance(pragma, exp.EQ):
+        raise QueryValidationError(
+            "Assignments to SQLite PRAGMA values are not allowed."
+        )
+
+    name = _function_name(pragma)
+    if not name or name.lower() not in READ_ONLY_SQLITE_PRAGMAS:
+        raise QueryValidationError(
+            "Only explicitly allowlisted read-only SQLite PRAGMA statements are allowed."
+        )
+    if pragma.expressions and name.lower() not in SQLITE_PRAGMAS_WITH_READ_ARGUMENTS:
+        raise QueryValidationError(
+            "Assignments to SQLite PRAGMA values are not allowed."
+        )
 
 
 def _reject_disallowed_nodes(expression: exp.Expression) -> None:
     for class_name in DISALLOWED_NODES:
         node_type = getattr(exp, class_name, None)
         if node_type and expression.find(node_type):
-            raise QueryValidationError(f"Disallowed SQL operation detected: {class_name.lower()}.")
+            raise QueryValidationError(
+                f"Disallowed SQL operation detected: {class_name.lower()}."
+            )
 
 
 def _reject_disallowed_functions(expression: exp.Expression) -> None:
     for node in expression.walk():
         name = _function_name(node)
-        if name and name.upper() in DISALLOWED_FUNCTIONS:
+        normalized = name.upper() if name else ""
+        if normalized in DISALLOWED_FUNCTIONS or normalized.startswith(
+            DISALLOWED_FUNCTION_PREFIXES
+        ):
             raise QueryValidationError(f"Disallowed SQL function detected: {name}.")
 
 
 def _function_name(node: exp.Expression) -> str | None:
-    if hasattr(node, "sql_name") and callable(getattr(node, "sql_name")):
+    if hasattr(node, "name"):
+        name = node.name
+        if isinstance(name, str) and name:
+            return name
+    if hasattr(node, "sql_name") and callable(node.sql_name):
         try:
             return str(node.sql_name())
         except TypeError:
             pass
-    if hasattr(node, "name"):
-        name = getattr(node, "name")
-        if isinstance(name, str) and name:
-            return name
     return None
 
 

@@ -7,45 +7,133 @@ on:
   workflow_dispatch:
 
 jobs:
-  test:
+  lint:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v9
+
+      - name: Check lint
+        run: uvx ruff==0.16.1 check .
+
+      - name: Check formatting
+        run: uvx ruff==0.16.1 format --check .
+
+  test:
+    runs-on: ${{ matrix.os }}
     permissions:
       contents: read
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.13"]
+        include:
+          - os: ubuntu-latest
+            python-version: "3.11"
+          - os: ubuntu-latest
+            python-version: "3.12"
+          - os: ubuntu-latest
+            python-version: "3.13"
+          - os: windows-latest
+            python-version: "3.13"
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v4
+        uses: astral-sh/setup-uv@v9
 
       - name: Run tests
         run: uv run --locked python -m unittest discover -v
 
+  integration:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: sqlagent
+          POSTGRES_PASSWORD: sqlagent-postgres
+          POSTGRES_DB: sqlagent
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U sqlagent -d sqlagent"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: sqlagent-root
+          MYSQL_DATABASE: sqlagent
+          MYSQL_USER: sqlagent
+          MYSQL_PASSWORD: sqlagent-mysql
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd "mysqladmin ping -h localhost -u root -psqlagent-root"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v9
+
+      - name: Run PostgreSQL and MySQL integration tests
+        env:
+          SQL_AGENT_CLI_INTEGRATION: "1"
+          SQL_AGENT_CLI_POSTGRES_HOST: 127.0.0.1
+          SQL_AGENT_CLI_POSTGRES_PORT: "5432"
+          SQL_AGENT_CLI_POSTGRES_DATABASE: sqlagent
+          SQL_AGENT_CLI_POSTGRES_USER: sqlagent
+          SQL_AGENT_CLI_POSTGRES_PASSWORD: sqlagent-postgres
+          SQL_AGENT_CLI_MYSQL_HOST: 127.0.0.1
+          SQL_AGENT_CLI_MYSQL_PORT: "3306"
+          SQL_AGENT_CLI_MYSQL_DATABASE: sqlagent
+          SQL_AGENT_CLI_MYSQL_USER: sqlagent
+          SQL_AGENT_CLI_MYSQL_PASSWORD: sqlagent-mysql
+        run: >-
+          uv run --locked python -m unittest
+          tests.test_network_integration
+          tests.test_read_only_integration
+          -v
+
   build:
-    needs: test
+    needs: [lint, test, integration]
     runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.11"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v4
+        uses: astral-sh/setup-uv@v9
 
       - name: Build package
         run: uv build --no-sources

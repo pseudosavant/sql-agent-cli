@@ -8,7 +8,7 @@ import tomllib
 from pathlib import Path
 from typing import Any
 
-from .models import AppConfig, Defaults, NETWORK_ENGINES, Target
+from .models import NETWORK_ENGINES, AppConfig, Defaults, Target
 
 CONFIG_PATH = Path("~/.sql-agent-cli/config.toml").expanduser()
 DEFAULT_FORMAT = "json"
@@ -46,7 +46,9 @@ def load_config(path: Path = CONFIG_PATH) -> AppConfig:
         target=defaults_raw.get("target"),
         format=defaults_raw.get("format"),
         max_rows=_int_or_none(defaults_raw.get("max_rows")),
-        connect_timeout_seconds=_int_or_none(defaults_raw.get("connect_timeout_seconds")),
+        connect_timeout_seconds=_int_or_none(
+            defaults_raw.get("connect_timeout_seconds")
+        ),
         query_timeout_seconds=_int_or_none(defaults_raw.get("query_timeout_seconds")),
     )
 
@@ -62,7 +64,9 @@ def load_config(path: Path = CONFIG_PATH) -> AppConfig:
             path=target_raw.get("path"),
             ssl_mode=target_raw.get("ssl_mode"),
             max_rows=_int_or_none(target_raw.get("max_rows")),
-            connect_timeout_seconds=_int_or_none(target_raw.get("connect_timeout_seconds")),
+            connect_timeout_seconds=_int_or_none(
+                target_raw.get("connect_timeout_seconds")
+            ),
             query_timeout_seconds=_int_or_none(target_raw.get("query_timeout_seconds")),
         )
     return AppConfig(defaults=defaults, targets=targets)
@@ -76,7 +80,9 @@ def save_config(config: AppConfig, path: Path = CONFIG_PATH) -> None:
 def resolve_target(config: AppConfig, args: Any) -> Target:
     requested_name = getattr(args, "target", None)
     explicit_engine = getattr(args, "engine", None)
-    selected_name = requested_name or (None if explicit_engine else config.defaults.target)
+    selected_name = requested_name or (
+        None if explicit_engine else config.defaults.target
+    )
     base = Target(name=selected_name)
     if selected_name:
         try:
@@ -98,7 +104,7 @@ def resolve_target(config: AppConfig, args: Any) -> Target:
         query_timeout_seconds=getattr(args, "query_timeout_seconds", None),
     )
     if getattr(args, "insecure", None):
-        overlay.ssl_mode = getattr(args, "insecure")
+        overlay.ssl_mode = args.insecure
 
     target = base.merged(overlay).with_defaults(config.defaults)
     target.name = target.name or "ephemeral"
@@ -136,7 +142,10 @@ def credential_hints_for_target(target: Target) -> dict[str, Any]:
     engine = normalize_engine(target.engine)
     if engine == "postgres":
         return {
-            "pgpass_candidates": [{"path": str(path), "exists": path.exists()} for path in postgres_auth_paths()],
+            "pgpass_candidates": [
+                {"path": str(path), "exists": path.exists()}
+                for path in postgres_auth_paths()
+            ],
             "env_vars": {
                 name: bool(os.getenv(name))
                 for name in ["PGHOST", "PGPORT", "PGDATABASE", "PGUSER", "PGPASSWORD"]
@@ -145,7 +154,8 @@ def credential_hints_for_target(target: Target) -> dict[str, Any]:
     if engine in {"mysql", "mariadb"}:
         return {
             "option_file_candidates": [
-                {"path": str(path), "exists": path.exists()} for path in mysql_option_file_paths()
+                {"path": str(path), "exists": path.exists()}
+                for path in mysql_option_file_paths()
             ]
         }
     if engine == "sqlite":
@@ -255,7 +265,8 @@ def _native_auth_template(engine: str, target: Target | None) -> tuple[Path, str
 def _native_auth_available(engine: str) -> bool:
     if engine == "postgres":
         return any(path.exists() for path in postgres_auth_paths()) or any(
-            bool(os.getenv(name)) for name in ["PGHOST", "PGPORT", "PGDATABASE", "PGUSER", "PGPASSWORD"]
+            bool(os.getenv(name))
+            for name in ["PGHOST", "PGPORT", "PGDATABASE", "PGUSER", "PGPASSWORD"]
         )
     if engine in {"mysql", "mariadb"}:
         return find_mysql_option_file() is not None
@@ -266,7 +277,13 @@ def _dump_toml(config: AppConfig) -> str:
     lines: list[str] = []
     lines.append("[defaults]")
     defaults = config.defaults.to_dict()
-    for key in ["target", "format", "max_rows", "connect_timeout_seconds", "query_timeout_seconds"]:
+    for key in [
+        "target",
+        "format",
+        "max_rows",
+        "connect_timeout_seconds",
+        "query_timeout_seconds",
+    ]:
         if key in defaults:
             lines.append(f"{key} = {_toml_value(defaults[key])}")
     if not defaults:

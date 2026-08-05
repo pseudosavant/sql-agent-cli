@@ -6,7 +6,12 @@ from tests._bootstrap import bootstrap_package
 
 bootstrap_package()
 
-from sql_agent.validation import QueryValidationError, UsageError, get_query_text, validate_query
+from sql_agent.validation import (
+    QueryValidationError,
+    UsageError,
+    get_query_text,
+    validate_query,
+)
 
 
 class ValidationTests(unittest.TestCase):

@@ -8,7 +8,9 @@ from ..models import QueryExecutionResult
 def fetch_limited_rows(cursor: Any, max_rows: int) -> QueryExecutionResult:
     columns = [column[0] for column in (cursor.description or [])]
     if not columns:
-        return QueryExecutionResult(columns=[], rows=[], returned_row_count=0, truncated=False)
+        return QueryExecutionResult(
+            columns=[], rows=[], returned_row_count=0, truncated=False
+        )
 
     rows = list(cursor.fetchmany(max_rows + 1))
     truncated = len(rows) > max_rows

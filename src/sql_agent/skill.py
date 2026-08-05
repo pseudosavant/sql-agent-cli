@@ -6,7 +6,6 @@ from typing import Any
 
 from .validation import UsageError
 
-
 SKILL_NAME = "sql-agent-cli"
 MANAGED_MARKER = "<!-- managed-by: sql-agent-cli -->"
 
@@ -52,6 +51,7 @@ uvx sql-agent-cli targets --format json
 - Treat `max_rows` and output truncation as response guardrails, not database-work limits. Use SQL filters and `LIMIT` to bound the work itself.
 - Start with schema or metadata inspection when table or column names are uncertain; do not guess repeatedly.
 - Do not add connection overrides unless the user supplied them or the configured target is insufficient.
+- Treat SQL validation and database-session read-only settings as defense in depth. Use targets authenticated as dedicated database roles with only the read and metadata privileges needed for the task.
 
 The CLI rejects mutating SQL, multiple statements, dangerous functions, and `SELECT ... INTO` forms. Treat those guardrails as a hard boundary.
 
@@ -90,7 +90,8 @@ Stdout is payload only. Treat stderr as diagnostics and errors.
 
 - Read stderr and correct the reported problem before retrying; do not repeat the same failing command.
 - For an unknown or ambiguous target, run `uvx sql-agent-cli targets --format json` and use an exact configured target name.
-- For setup or authentication diagnostics, run `uvx sql-agent-cli config show`.
+- After a setup, connection, authentication, or TLS failure, run `uvx sql-agent-cli config check --format json` once for the default target, or add `--target NAME` for a named target. Do not run this preflight before a normal first query.
+- If the check indicates missing or incomplete configuration, run `uvx sql-agent-cli config show --format json`.
 - Do not inspect credential files, change configuration, weaken TLS, or repeatedly guess schema names without user direction.
 
 ## Authentication And Configuration
@@ -100,6 +101,7 @@ Prefer configured targets and native database credential mechanisms. PostgreSQL 
 For setup diagnostics, use the public inspection commands rather than reading secret-bearing files:
 
 ```text
+uvx sql-agent-cli config check --format json
 uvx sql-agent-cli config show
 uvx sql-agent-cli targets
 ```
@@ -112,7 +114,7 @@ For a one-off SQLite database, an explicit path is appropriate:
 uvx sql-agent-cli --engine sqlite --path ./app.db "SELECT ..."
 ```
 
-For network databases, keep secure TLS defaults. Do not use `--insecure` or disable TLS unless the user explicitly accepts that change.
+For network databases, keep secure TLS defaults. `--ssl-mode required` requires encrypted transport; certificate and hostname verification depend on the PostgreSQL or MySQL native trust configuration. Do not use `--insecure` or disable TLS unless the user explicitly accepts that change.
 """
 
 
@@ -139,11 +141,18 @@ def install_skill(skills_dir: Path | None = None) -> dict[str, Any]:
     }
 
 
-def remove_skill(skills_dir: Path | None = None, *, force: bool = False) -> dict[str, Any]:
+def remove_skill(
+    skills_dir: Path | None = None, *, force: bool = False
+) -> dict[str, Any]:
     target = skill_dir(skills_dir)
     skill_path = target / "SKILL.md"
     if not target.exists():
-        return {"removed": False, "skill": SKILL_NAME, "path": str(target), "reason": "not_installed"}
+        return {
+            "removed": False,
+            "skill": SKILL_NAME,
+            "path": str(target),
+            "reason": "not_installed",
+        }
     if not skill_path.exists():
         raise UsageError(f"refusing to remove '{target}' because SKILL.md is missing.")
     content = skill_path.read_text(encoding="utf-8")
