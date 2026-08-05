@@ -74,7 +74,9 @@ def save_config(config: AppConfig, path: Path = CONFIG_PATH) -> None:
 
 
 def resolve_target(config: AppConfig, args: Any) -> Target:
-    selected_name = getattr(args, "target", None) or config.defaults.target
+    requested_name = getattr(args, "target", None)
+    explicit_engine = getattr(args, "engine", None)
+    selected_name = requested_name or (None if explicit_engine else config.defaults.target)
     base = Target(name=selected_name)
     if selected_name:
         try:

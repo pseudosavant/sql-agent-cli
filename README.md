@@ -33,6 +33,12 @@ uvx sql-agent-cli --help
 sql-agent-cli "SELECT 1"
 ```
 
+Install or update the managed `$sql-agent-cli` skill:
+
+```text
+uvx sql-agent-cli install-skill
+```
+
 ## Primary usage
 
 Happy path for agents and humans:
@@ -75,7 +81,7 @@ Stdin:
 Get-Content query.sql | sql-agent-cli --target reporting
 ```
 
-One-off SQLite query without config:
+One-off SQLite query, bypassing any configured default target:
 
 ```text
 sql-agent-cli --engine sqlite --path C:\data\app.db "SELECT * FROM customers LIMIT 5"
@@ -164,6 +170,26 @@ sql-agent-cli targets
 ```
 
 `config show` displays effective target settings and credential-source hints without revealing secrets.
+
+## Agent skill
+
+Install or update the user-scoped `$sql-agent-cli` skill:
+
+```text
+uvx sql-agent-cli install-skill
+```
+
+By default, this writes `~/.agents/skills/sql-agent-cli/SKILL.md`. The skill teaches agentic tools to start with the configured default target, run bounded read-only SQL, parse structured output, and preserve native credential and TLS safety.
+
+Use `--skills-dir PATH` to target a different skills root. Installation is idempotent and replaces stale skill content with the version bundled by the CLI.
+
+Remove the managed skill with:
+
+```text
+uvx sql-agent-cli remove-skill
+```
+
+Removal refuses an unmanaged `SKILL.md` unless `--force` is supplied.
 
 ## Output
 

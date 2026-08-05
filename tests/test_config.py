@@ -112,6 +112,48 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(target.max_rows, 25)
         self.assertEqual(target.connect_timeout_seconds, 9)
 
+    def test_explicit_engine_builds_ephemeral_target_instead_of_merging_default(self) -> None:
+        app_config = AppConfig(
+            defaults=Defaults(target="dev", max_rows=25),
+            targets={
+                "dev": Target(
+                    name="dev",
+                    engine="mysql",
+                    host="db.example.com",
+                    port=3306,
+                    database="app",
+                    user="reader",
+                    ssl_mode="required",
+                )
+            },
+        )
+        args = SimpleNamespace(
+            target=None,
+            engine="sqlite",
+            database=None,
+            user=None,
+            host=None,
+            port=None,
+            path="C:/tmp/demo.db",
+            ssl_mode=None,
+            max_rows=None,
+            connect_timeout_seconds=None,
+            query_timeout_seconds=None,
+            insecure=None,
+        )
+
+        target = config.resolve_target(app_config, args)
+
+        self.assertEqual(target.name, "ephemeral")
+        self.assertEqual(target.engine, "sqlite")
+        self.assertEqual(target.path, "C:/tmp/demo.db")
+        self.assertEqual(target.max_rows, 25)
+        self.assertIsNone(target.host)
+        self.assertIsNone(target.port)
+        self.assertIsNone(target.database)
+        self.assertIsNone(target.user)
+        self.assertIsNone(target.ssl_mode)
+
     def test_save_and_load_round_trip(self) -> None:
         temp_dir = _test_temp_dir("config-roundtrip")
         self.addCleanup(lambda: shutil.rmtree(temp_dir, ignore_errors=True))

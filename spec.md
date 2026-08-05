@@ -201,8 +201,9 @@ If more than one query source is supplied, fail with a usage error.
 Resolution order:
 
 1. `--target NAME`
-2. `[defaults].target`
-3. fail with a clear error if no target is available
+2. an explicit `--engine` builds an ephemeral target without merging `[defaults].target`
+3. `[defaults].target`
+4. fail with a clear error if no target is available
 
 ## One-off connection overrides
 
@@ -222,6 +223,7 @@ Behavior:
 2. CLI connection flags override the selected config target field-by-field.
 3. If no target is specified and no default target exists, a complete ephemeral CLI target is allowed.
 4. If the resulting target is incomplete, fail with a clear validation error before attempting a connection.
+5. If `--engine` is supplied without `--target`, start from an ephemeral target rather than the configured default target.
 
 ## Credential input methods
 
@@ -247,11 +249,21 @@ sql-agent-cli config remove-target NAME
 sql-agent-cli config init-native-auth --engine postgres [--target NAME]
 sql-agent-cli config init-native-auth --engine mysql [--target NAME]
 sql-agent-cli targets
+sql-agent-cli install-skill
+sql-agent-cli remove-skill
 ```
 
 Compatibility requirement:
 
 - none
+
+## Managed agent skill
+
+`sql-agent-cli install-skill` should install or update a managed `$sql-agent-cli` skill at `~/.agents/skills/sql-agent-cli/SKILL.md` by default. `--skills-dir PATH` should allow a different skills root.
+
+Installation should be idempotent, replace stale skill content with the version bundled by the CLI, and emit a deterministic JSON result. The skill should document the default-target happy path, read-only boundary, supported query sources, structured output handling, native credential preference, and secure TLS behavior.
+
+`sql-agent-cli remove-skill` should remove only content carrying the tool's managed marker unless `--force` is supplied. Removing a missing skill should succeed with a deterministic `not_installed` JSON result.
 
 ---
 

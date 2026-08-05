@@ -19,6 +19,7 @@ from .config import (
 )
 from .models import AppConfig, Target
 from .render import render_config_show_text, render_output, render_targets_text
+from .skill import install_skill, remove_skill
 from .validation import SqlAgentError, UsageError, get_query_text, validate_query
 
 FORMAT_CHOICES = ("json", "markdown", "table", "csv")
@@ -39,6 +40,10 @@ def main(argv: list[str] | None = None) -> int:
             return _handle_config(args_list[1:])
         if args_list and args_list[0] == "targets":
             return _handle_targets(args_list[1:])
+        if args_list and args_list[0] == "install-skill":
+            return _handle_install_skill(args_list[1:])
+        if args_list and args_list[0] == "remove-skill":
+            return _handle_remove_skill(args_list[1:])
         return _handle_query(args_list)
     except SqlAgentError as exc:
         print(str(exc), file=sys.stderr)
@@ -184,6 +189,29 @@ def _handle_targets(argv: list[str]) -> int:
     return 0
 
 
+def _handle_install_skill(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(
+        prog=f"{PROGRAM_NAME} install-skill",
+        description="Install or update the $sql-agent-cli skill.",
+    )
+    parser.add_argument("--skills-dir", type=Path, help="Install into this skills root directory.")
+    args = parser.parse_args(argv)
+    print(json.dumps(install_skill(args.skills_dir), indent=2))
+    return 0
+
+
+def _handle_remove_skill(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(
+        prog=f"{PROGRAM_NAME} remove-skill",
+        description="Remove the managed $sql-agent-cli skill.",
+    )
+    parser.add_argument("--skills-dir", type=Path, help="Remove from this skills root directory.")
+    parser.add_argument("--force", action="store_true", help="Remove even if the skill is not managed.")
+    args = parser.parse_args(argv)
+    print(json.dumps(remove_skill(args.skills_dir, force=args.force), indent=2))
+    return 0
+
+
 def _config_add_target(config: AppConfig, args: argparse.Namespace) -> int:
     existing = config.targets.get(args.name, Target(name=args.name))
     overlay = Target(
@@ -238,14 +266,15 @@ def _build_query_parser() -> argparse.ArgumentParser:
             f"  {PROGRAM_NAME} \"SELECT ...\"\n\n"
             "By default, sql-agent-cli uses the configured default target/environment.\n"
             "If a default target is already configured, the usual invocation is to pass\n"
-            "only the SQL query. Do not search for config files or environment details\n"
-            "first unless the query fails or you need a non-default target."
+            "only the SQL query.\n"
+            "Do not search for config files or environment details first unless the query\n"
+            "fails or you need a non-default target."
         ),
         epilog=(
             "Target resolution:\n"
             "  1. --target NAME\n"
-            "  2. [defaults].target from ~/.sql-agent-cli/config.toml\n"
-            "  3. An ephemeral target built from explicit connection flags\n\n"
+            "  2. An explicit --engine builds an ephemeral target\n"
+            "  3. [defaults].target from ~/.sql-agent-cli/config.toml\n\n"
             "Query sources:\n"
             "  Provide exactly one of: positional SQL, --query, --sql-file, or stdin.\n\n"
             "Examples:\n"
@@ -258,7 +287,9 @@ def _build_query_parser() -> argparse.ArgumentParser:
             "Admin commands:\n"
             f"  {PROGRAM_NAME} targets\n"
             f"  {PROGRAM_NAME} config show\n"
-            f"  {PROGRAM_NAME} config set-default-target NAME"
+            f"  {PROGRAM_NAME} config set-default-target NAME\n"
+            f"  {PROGRAM_NAME} install-skill\n"
+            f"  {PROGRAM_NAME} remove-skill"
         ),
         formatter_class=HelpFormatter,
     )
