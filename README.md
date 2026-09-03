@@ -13,7 +13,7 @@ V1 targets:
 
 ## Status
 
-Version 0.12.0 is the final pre-1.0 release candidate. Its public command, config, JSON, and exit-code contracts are being frozen for 1.0; incompatible changes found during release-candidate testing will be documented.
+Version 0.13.0 adds managed skill synchronization to the pre-1.0 CLI. Its public command, config, JSON, and exit-code contracts are being stabilized for 1.0. Incompatible changes found during testing will be documented.
 
 The current behavior target is defined in [`spec.md`](./spec.md).
 
@@ -37,7 +37,7 @@ sql-agent-cli "SELECT 1"
 Install or update the managed `$sql-agent-cli` skill:
 
 ```text
-uvx sql-agent-cli install-skill
+uvx sql-agent-cli skill install
 ```
 
 ## Primary usage
@@ -199,15 +199,38 @@ uvx sql-agent-cli install-skill
 
 By default, this writes `~/.agents/skills/sql-agent-cli/SKILL.md`. The skill teaches agentic tools to start with the configured default target, run bounded read-only SQL, parse structured output, and preserve native credential and TLS safety.
 
-Use `--skills-dir PATH` to target a different skills root. Installation is idempotent and replaces stale skill content with the version bundled by the CLI.
+Normally installed CLI runs automatically synchronize an already-installed managed skill in this standard location. The running CLI version is the authority. An older, unmodified skill is replaced with the bundled skill. Equal or newer versions are left alone. Nothing is installed automatically, and unmanaged content is never overwritten.
+
+Synchronization is local. It does not query a package index, refresh uv's cache, or update the CLI. Local source checkouts, local source installations, and editable builds skip automatic synchronization. Explicit installation still works from development builds, including `uvx --from . sql-agent-cli skill install`.
+
+The skill records `metadata.managed-by: sql-agent-cli`, a quoted `managed-version`, and `managed-content-sha256` in its YAML front matter. The hash covers the complete UTF-8 text with LF line endings and only the hash value replaced by `""`. It detects modifications, not authenticity. Legacy HTML markers remain recognized. Managed skills with missing or malformed versions receive a fresh replacement, including one-time migration of unversioned legacy skills as version 0.
+
+With valid version metadata, modified skills and skills with missing or invalid hashes are preserved. To replace managed content explicitly:
+
+```text
+uvx sql-agent-cli skill install --force
+```
+
+Force installation still refuses unmanaged content and never downgrades a newer skill. Normal installation creates a missing skill, updates a pristine older skill, and leaves a current skill unchanged.
+
+Inspect the path, management state, installed and running versions, integrity, and automatic synchronization eligibility without changing files:
+
+```text
+uvx sql-agent-cli skill status
+uvx sql-agent-cli skill status --format json
+```
+
+Use `--skills-dir PATH` with any skill command to select a different skills root. Custom locations require explicit updates and are never discovered by automatic synchronization. Add the same `--skills-dir PATH` when force installing into a custom location.
 
 Remove the managed skill with:
 
 ```text
-uvx sql-agent-cli remove-skill
+uvx sql-agent-cli skill remove
 ```
 
-Removal refuses an unmanaged `SKILL.md` unless `--force` is supplied.
+Removal refuses an unmanaged `SKILL.md` unless `--force` is supplied. Only `SKILL.md` is managed. Unrelated files remain in place. The `install-skill` and `remove-skill` aliases and their default JSON results remain supported. All skill commands accept `--format text|json`. Status defaults to text. Installation and removal default to JSON.
+
+Skill commands skip automatic synchronization. Other invocations, including help, version, inspection, and query output, check for updates. Successful updates and preserved older modifications produce concise stderr notices. Maintenance failures never change the primary command's exit status or JSON stdout. Updated instructions affect future skill loading and may not replace instructions already loaded into a running agent session.
 
 ## Output
 
@@ -340,6 +363,15 @@ Run the pinned lint baseline with:
 uvx ruff==0.16.1 check .
 uvx ruff==0.16.1 format --check .
 ```
+
+Build and smoke-test an installed wheel in an isolated environment:
+
+```text
+uv build --no-sources
+uv run --no-project --with ./dist/sql_agent_cli-0.13.0-py3-none-any.whl python tests/wheel_smoke.py
+```
+
+The smoke check verifies packaged skill generation, runtime version discovery, and automatic synchronization using a temporary skill directory. Run it with `--expected-source local` or `--expected-source editable` when validating those installation types.
 
 See [`SECURITY.md`](./SECURITY.md) for the security model and vulnerability-reporting guidance, and [`CHANGELOG.md`](./CHANGELOG.md) for release changes.
 

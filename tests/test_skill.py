@@ -12,12 +12,14 @@ from tests._bootstrap import bootstrap_package
 bootstrap_package()
 
 from sql_agent.cli import main
-from sql_agent.skill import MANAGED_MARKER, SKILL_MD, install_skill, remove_skill
+from sql_agent.skill import install_skill, remove_skill, render_skill
 from sql_agent.validation import UsageError
+
+SKILL_MD = render_skill()
 
 
 class SkillTests(unittest.TestCase):
-    def test_install_creates_updates_and_overwrites_skill(self) -> None:
+    def test_install_creates_and_preserves_unmanaged_skill(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             skills_root = Path(temp)
             first = install_skill(skills_root)
@@ -30,6 +32,9 @@ class SkillTests(unittest.TestCase):
             skill_path.write_text(
                 "---\nname: sql-agent-cli\n---\ncustom\n", encoding="utf-8"
             )
+            with self.assertRaises(UsageError):
+                install_skill(skills_root)
+            skill_path.write_text(render_skill("0.11.0"), encoding="utf-8")
             second = install_skill(skills_root)
             self.assertTrue(second["updated"])
             self.assertEqual(skill_path.read_text(encoding="utf-8"), SKILL_MD)
@@ -55,7 +60,7 @@ class SkillTests(unittest.TestCase):
         self.assertIn("dedicated database roles", SKILL_MD)
         self.assertIn("requires encrypted transport", SKILL_MD)
         self.assertIn("native trust configuration", SKILL_MD)
-        self.assertIn(MANAGED_MARKER, SKILL_MD)
+        self.assertIn("managed-by: sql-agent-cli", SKILL_MD)
         self.assertNotIn("Codex", SKILL_MD)
         self.assertNotIn("powershell", SKILL_MD.lower())
 

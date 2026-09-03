@@ -2,6 +2,8 @@
 # /// script
 # requires-python = ">=3.11"
 # dependencies = [
+#   "packaging>=23.2",
+#   "PyYAML>=6.0",
 #   "PyMySQL[rsa]>=1.1.0",
 #   "psycopg[binary]>=3.2.0",
 #   "sqlglot>=26.0.0",

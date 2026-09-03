@@ -27,7 +27,7 @@ from .render import (
     render_output,
     render_targets_text,
 )
-from .skill import install_skill, remove_skill
+from .skill import install_skill, remove_skill, skill_status, synchronize_skill
 from .validation import (
     QueryExecutionError,
     SqlAgentError,
@@ -53,14 +53,13 @@ class HelpFormatter(argparse.RawDescriptionHelpFormatter):
 def main(argv: list[str] | None = None) -> int:
     args_list = list(sys.argv[1:] if argv is None else argv)
     try:
+        if args_list and args_list[0] in {"skill", "install-skill", "remove-skill"}:
+            return _handle_skill(args_list)
+        synchronize_skill()
         if args_list and args_list[0] == "config":
             return _handle_config(args_list[1:])
         if args_list and args_list[0] == "targets":
             return _handle_targets(args_list[1:])
-        if args_list and args_list[0] == "install-skill":
-            return _handle_install_skill(args_list[1:])
-        if args_list and args_list[0] == "remove-skill":
-            return _handle_remove_skill(args_list[1:])
         return _handle_query(args_list)
     except SqlAgentError as exc:
         print(str(exc), file=sys.stderr)
@@ -263,32 +262,76 @@ def _handle_targets(argv: list[str]) -> int:
     return 0
 
 
-def _handle_install_skill(argv: list[str]) -> int:
+def _handle_skill(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(
-        prog=f"{PROGRAM_NAME} install-skill",
-        description="Install or update the $sql-agent-cli skill.",
+        prog=f"{PROGRAM_NAME} skill",
+        description=(
+            "Manage the $sql-agent-cli skill. Normal installed CLI runs update an "
+            "already-installed, pristine older managed skill in the standard location. "
+            "Local and editable builds skip automatic synchronization."
+        ),
+        epilog=(
+            "Custom locations require explicit updates. The running CLI version is "
+            "the authority. This does not update the CLI or uv. Skill commands never "
+            "run automatic synchronization."
+        ),
     )
-    parser.add_argument(
-        "--skills-dir", type=Path, help="Install into this skills root directory."
+    commands = parser.add_subparsers(dest="command")
+    install = commands.add_parser(
+        "install",
+        help="Install or update a managed skill.",
+        description="Install a missing skill or update a pristine older managed skill. Modified skills are preserved.",
     )
-    args = parser.parse_args(argv)
-    print(json.dumps(install_skill(args.skills_dir), indent=2))
-    return 0
-
-
-def _handle_remove_skill(argv: list[str]) -> int:
-    parser = argparse.ArgumentParser(
-        prog=f"{PROGRAM_NAME} remove-skill",
+    install.add_argument(
+        "--force",
+        action="store_true",
+        help="Replace altered or unverifiable managed content. Never overwrite unmanaged or newer skills.",
+    )
+    remove = commands.add_parser(
+        "remove",
+        help="Remove a managed skill.",
         description="Remove the managed $sql-agent-cli skill.",
     )
-    parser.add_argument(
-        "--skills-dir", type=Path, help="Remove from this skills root directory."
-    )
-    parser.add_argument(
+    remove.add_argument(
         "--force", action="store_true", help="Remove even if the skill is not managed."
     )
+    status = commands.add_parser(
+        "status",
+        help="Inspect management, version, integrity, and synchronization eligibility.",
+        description="Read skill status without modifying any files.",
+    )
+    for command in (install, remove, status):
+        command.add_argument(
+            "--skills-dir",
+            type=Path,
+            help="Skills root directory. Defaults to ~/.agents/skills. Custom locations require explicit updates.",
+        )
+        command.add_argument(
+            "--format",
+            choices=ADMIN_FORMAT_CHOICES,
+            default="text" if command is status else "json",
+        )
+    if argv[0] != "skill":
+        argv = [argv[0].removesuffix("-skill"), *argv[1:]]
+    else:
+        argv = argv[1:]
     args = parser.parse_args(argv)
-    print(json.dumps(remove_skill(args.skills_dir, force=args.force), indent=2))
+    if args.command is None:
+        parser.print_help()
+        return 0
+    if args.command == "install":
+        payload = install_skill(args.skills_dir, force=args.force)
+    elif args.command == "remove":
+        payload = remove_skill(args.skills_dir, force=args.force)
+    else:
+        payload = skill_status(args.skills_dir)
+    if args.format == "json":
+        print(json.dumps(payload, indent=2))
+    else:
+        for key, value in payload.items():
+            print(
+                f"{key.replace('_', ' ')}: {json.dumps(value) if not isinstance(value, str) else value}"
+            )
     return 0
 
 
@@ -428,8 +471,13 @@ def _build_query_parser() -> argparse.ArgumentParser:
             f"  {PROGRAM_NAME} config show\n"
             f"  {PROGRAM_NAME} config check\n"
             f"  {PROGRAM_NAME} config set-default-target NAME\n"
-            f"  {PROGRAM_NAME} install-skill\n"
-            f"  {PROGRAM_NAME} remove-skill"
+            f"  {PROGRAM_NAME} skill install [--force]\n"
+            f"  {PROGRAM_NAME} skill status [--format json]\n"
+            f"  {PROGRAM_NAME} skill remove [--force]\n"
+            "  install-skill and remove-skill remain supported aliases.\n\n"
+            "Installed managed skills synchronize locally on normal runs.\n"
+            "Only pristine older skills in ~/.agents/skills are updated automatically.\n"
+            "Local and editable builds skip synchronization. See skill --help."
         ),
         formatter_class=HelpFormatter,
     )

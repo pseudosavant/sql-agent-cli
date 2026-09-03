@@ -24,7 +24,7 @@ License:
 
 Release status:
 
-- 0.12.0 is the final pre-1.0 release candidate.
+- 0.13.0 adds managed skill synchronization while the public contracts are stabilized for 1.0.
 - The documented CLI, config, JSON, stdout/stderr, and exit-code behavior in this spec is the intended 1.0 public contract.
 
 ---
@@ -256,6 +256,9 @@ sql-agent-cli config remove-target NAME
 sql-agent-cli config init-native-auth --engine postgres [--target NAME]
 sql-agent-cli config init-native-auth --engine mysql [--target NAME]
 sql-agent-cli targets
+sql-agent-cli skill install [--force] [--skills-dir PATH]
+sql-agent-cli skill status [--format text|json] [--skills-dir PATH]
+sql-agent-cli skill remove [--force] [--skills-dir PATH]
 sql-agent-cli install-skill
 sql-agent-cli remove-skill
 ```
@@ -266,11 +269,27 @@ Compatibility requirement:
 
 ## Managed agent skill
 
-`sql-agent-cli install-skill` should install or update a managed `$sql-agent-cli` skill at `~/.agents/skills/sql-agent-cli/SKILL.md` by default. `--skills-dir PATH` should allow a different skills root.
+`uvx sql-agent-cli skill install` installs or updates the managed `$sql-agent-cli` skill at `~/.agents/skills/sql-agent-cli/SKILL.md`. `install-skill` remains an alias. All skill commands support `--skills-dir PATH` for explicit custom locations and `--format text|json`. Installation and removal retain their default deterministic JSON results. Status defaults to text.
 
-Installation should be idempotent, replace stale skill content with the version bundled by the CLI, and emit a deterministic JSON result. The skill should use `uvx sql-agent-cli`, document the default-target happy path, read-only boundary, least-privilege database roles, supported query sources, structured output handling, native credential preference, exact TLS behavior, and one-time `config check` troubleshooting after connection failures without requiring preflight checks before normal queries.
+One canonical renderer supplies the existing name, description, instructions, and examples. The skill continues using `uvx sql-agent-cli` with the default-target happy path, read-only boundary, least-privilege roles, structured output, native credentials, TLS behavior, and one-time `config check` troubleshooting. Generation uses UTF-8 without a BOM, LF line endings, and a trailing newline.
 
-`sql-agent-cli remove-skill` should remove only content carrying the tool's managed marker unless `--force` is supplied. Removing a missing skill should succeed with a deterministic `not_installed` JSON result.
+Management state lives under the supported YAML `metadata` mapping. `managed-by` is `sql-agent-cli`. `managed-version` is a quoted string exactly matching `sql_agent.__version__`, the runtime version reported by the CLI. `managed-content-sha256` is a quoted `sha256:` value followed by 64 lowercase hexadecimal characters. There is no top-level version or sidecar. Existing unrelated supported template metadata is preserved.
+
+The hash covers the entire normalized UTF-8 file with only the hash field's value replaced by `""`. Verification uses the installed file's original formatting, without YAML reserialization or comparison with the current bundled hash. CRLF and CR normalize to LF. The hash detects modifications and is not a signature.
+
+Normal CLI runs, including help, version, about, inspection, and rendering, synchronize only an existing managed skill in the standard location. All skill-management commands skip this check. PEP 440 comparison determines whether the installed version is older, equal, or newer. Equal and newer versions are never automatically replaced. A pristine older version is updated. An older skill with a missing, malformed, or mismatched hash is preserved with a stderr recommendation to run `uvx sql-agent-cli skill install --force`.
+
+The legacy `<!-- managed-by: sql-agent-cli -->` marker remains recognized unless parsed metadata names a different manager. Unversioned legacy skills are treated as version 0. Missing or malformed managed versions trigger a fresh replacement before hash checks. Newly generated skills use only front matter management metadata.
+
+Explicit installation creates missing skills and updates pristine older skills. Current skills are unchanged. Altered or unverifiable managed skills with valid versions require `--force`. Force installation still refuses unmanaged content and never downgrades newer versions. Unexpected directories and unrelated files are preserved.
+
+Automatic synchronization uses installed-distribution metadata to exclude editable and local source builds, including PEP 610 local `file:` sources. Installed wheels remain eligible, including local wheel artifacts. Unidentified runtime sources skip synchronization. Explicit installation still works from local builds. Custom locations require explicit updates. The feature never queries an index, refreshes uv's cache, or updates the CLI.
+
+`skill status` is read-only. Its text and JSON output report the selected path, installation and management state, runtime and installed versions, version comparison, integrity, runtime source, automatic eligibility and skip reason, and an applicable force-install recommendation.
+
+Replacement writes and flushes a temporary file in the target directory, closes it, revalidates the installed state, and uses atomic replacement. Failures clean up temporary files and never affect the primary command's exit status. Notices use stderr exclusively. Updates affect future agent skill loading and may not change a running agent session.
+
+`skill remove` and its `remove-skill` alias remove managed `SKILL.md` files, including legacy skills. Existing `--force` removal of unmanaged content remains supported. Removal preserves unrelated files and removes the skill directory only when empty. A missing skill directory returns the existing `not_installed` JSON result.
 
 ---
 
