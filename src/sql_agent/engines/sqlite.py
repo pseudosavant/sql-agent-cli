@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+from contextlib import contextmanager
 from pathlib import Path
 from time import monotonic
 from urllib.parse import quote
@@ -9,7 +10,8 @@ from ..models import QueryExecutionResult, Target
 from .base import fetch_limited_rows
 
 
-def execute_sqlite_query(target: Target, sql: str) -> QueryExecutionResult:
+@contextmanager
+def open_connection(target: Target):
     if not target.path:
         raise ValueError("SQLite target is missing --path.")
 
@@ -33,20 +35,24 @@ def execute_sqlite_query(target: Target, sql: str) -> QueryExecutionResult:
     if deadline is not None:
         connection.set_progress_handler(stop_after_deadline, 1_000)
     try:
-        cursor = connection.cursor()
-        try:
-            try:
-                cursor.execute(sql)
-                return fetch_limited_rows(cursor, target.max_rows or 200)
-            except sqlite3.DatabaseError as exc:
-                if timed_out:
-                    raise TimeoutError(
-                        f"SQLite query exceeded the {target.query_timeout_seconds}-second timeout."
-                    ) from exc
-                raise
-        finally:
-            cursor.close()
+        yield connection
+    except sqlite3.DatabaseError as exc:
+        if timed_out:
+            raise TimeoutError(
+                f"SQLite query exceeded the {target.query_timeout_seconds}-second timeout."
+            ) from exc
+        raise
     finally:
         if deadline is not None:
             connection.set_progress_handler(None, 0)
         connection.close()
+
+
+def execute_sqlite_query(target: Target, sql: str) -> QueryExecutionResult:
+    with open_connection(target) as connection:
+        cursor = connection.cursor()
+        try:
+            cursor.execute(sql)
+            return fetch_limited_rows(cursor, target.max_rows or 200)
+        finally:
+            cursor.close()

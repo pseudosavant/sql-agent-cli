@@ -7,24 +7,17 @@ from sqlglot import parse
 from sqlglot.errors import ParseError
 
 from .config import normalize_engine
+from .errors import QueryExecutionError, QueryValidationError, SqlAgentError, UsageError
 from .models import ValidatedQuery
 
-
-class SqlAgentError(Exception):
-    exit_code = 1
-
-
-class UsageError(SqlAgentError):
-    exit_code = 2
-
-
-class QueryValidationError(SqlAgentError):
-    exit_code = 2
-
-
-class QueryExecutionError(SqlAgentError):
-    exit_code = 1
-
+__all__ = [
+    "QueryExecutionError",
+    "QueryValidationError",
+    "SqlAgentError",
+    "UsageError",
+    "get_query_text",
+    "validate_query",
+]
 
 DISALLOWED_FUNCTIONS = {
     "BENCHMARK",
@@ -220,6 +213,11 @@ def _is_allowed_root(expression: exp.Expression, engine: str | None) -> bool:
 def _validate_sqlite_pragma(expression: exp.Expression) -> None:
     pragma = expression.this
     if isinstance(pragma, exp.EQ):
+        # Newer SQLGlot versions represent argument pragmas as equality nodes.
+        # These metadata pragmas accept a read argument in either SQLite syntax.
+        name = _function_name(pragma.this)
+        if name and name.lower() in SQLITE_PRAGMAS_WITH_READ_ARGUMENTS:
+            return
         raise QueryValidationError(
             "Assignments to SQLite PRAGMA values are not allowed."
         )

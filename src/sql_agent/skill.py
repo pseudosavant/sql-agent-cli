@@ -112,12 +112,13 @@ Stdout is payload only. Treat stderr as diagnostics and errors.
 - Read stderr and correct the reported problem before retrying. Do not repeat the same failing command.
 - For an unknown or ambiguous target, run `uvx sql-agent-cli targets --format json` and use an exact configured target name.
 - After a setup, connection, authentication, or TLS failure, run `uvx sql-agent-cli config check --format json` once for the default target, or add `--target NAME` for a named target. Do not run this preflight before a normal first query.
-- If the check indicates missing or incomplete configuration, run `uvx sql-agent-cli config show --format json`.
+- If configuration or credentials are missing, tell the user to run `uvx sql-agent-cli setup` in their terminal. Do not run interactive setup in an agent harness.
+- For remote hosts, containers, or sandboxes, run `uvx sql-agent-cli config check --offline --format json` in that execution environment. A terminal login or local file does not establish agent access.
 - Do not inspect credential files, change configuration, weaken TLS, or repeatedly guess schema names without user direction.
 
 ## Authentication And Configuration
 
-Prefer configured targets and native database credential mechanisms. PostgreSQL can use libpq environment variables or `.pgpass`. MySQL and MariaDB can use client option files. Never print, persist, or place passwords in command arguments.
+Prefer configured targets. The CLI resolves saved credentials, explicit environment overrides, and native authentication. PostgreSQL supports libpq sources. MySQL and MariaDB support client option files. Never read credential files, request credentials in agent chat, print them, or place them in command arguments.
 
 For setup diagnostics, use the public inspection commands rather than reading secret-bearing files:
 
@@ -135,7 +136,9 @@ For a one-off SQLite database, an explicit path is appropriate:
 uvx sql-agent-cli --engine sqlite --path ./app.db "SELECT ..."
 ```
 
-For network databases, keep secure TLS defaults. `--ssl-mode required` requires encrypted transport. Certificate and hostname verification depend on the PostgreSQL or MySQL native trust configuration. Do not use `--insecure` or disable TLS unless the user explicitly accepts that change.
+Setup installs this skill in `~/.agents/skills/sql-agent-cli/SKILL.md`. The project does not manage agent-specific copies.
+
+For network databases, keep secure TLS defaults. New setup targets use `--ssl-mode verify-full`, which verifies the certificate and hostname. Existing `--ssl-mode required` settings guarantee encryption without guaranteeing server identity. Do not use `--insecure` or disable TLS unless the user explicitly accepts that change.
 """
 
 

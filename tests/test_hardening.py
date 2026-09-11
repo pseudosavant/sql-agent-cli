@@ -144,7 +144,7 @@ class RuntimeHardeningTests(unittest.TestCase):
 
         self.assertEqual(exit_code, 1)
         self.assertEqual(stdout.getvalue(), "")
-        self.assertIn("SQLite query exceeded the 1-second timeout", stderr.getvalue())
+        self.assertIn("database operation timed out", stderr.getvalue())
         self.assertNotIn("Traceback", stderr.getvalue())
 
     def test_successful_json_contract_remains_stable(self) -> None:

@@ -4,6 +4,17 @@ All notable changes to this project are documented here. Starting with 1.0.0, re
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-09-10
+
+- Added one-command setup that accepts password-free database URLs or SQLite paths, prompts for missing details, verifies the database, and installs the managed skill in `~/.agents/skills`.
+- Made setup reports readable text by default. `--format json` provides structured output for automation. Query output remains JSON by default.
+- Added asterisk-masked password input and separate managed credential storage. Existing native authentication remains available, with explicit environment overrides and deterministic non-interactive setup.
+- Added verified TLS for new setup targets, including private CAs and native client certificates. Existing targets retain their TLS settings.
+- Expanded `config check` with offline diagnostics, credential-source reporting, read-only session checks, and bounded catalog verification. Configuration inspection no longer synchronizes skills.
+- Preserved unrelated configuration, comments, credentials, and protected skill content during repeated setup. Password replacement verifies the new credential before switching its configuration reference.
+- Improved safe recovery messages, absolute SQLite paths, native connection discovery, and SQLite schema inspection with newer SQLGlot versions.
+- Rewrote the PowerShell and Bash quick starts and documented permissions, credential renewal, and agent execution environments. Added onboarding and packaging coverage.
+
 ## [0.13.0] - 2026-09-03
 
 - Added local automatic synchronization of already-installed managed agent skills, using the running CLI version and front matter content hashes to preserve modifications and prevent downgrades.
@@ -24,6 +35,7 @@ All notable changes to this project are documented here. Starting with 1.0.0, re
 - Added and refined the managed `$sql-agent-cli` skill, including `uvx` invocation, troubleshooting, least-privilege, and TLS guidance.
 - Documented the public JSON, config, stream, exit-code, semantic-versioning, deprecation, and security contracts targeted for 1.0.
 
-[Unreleased]: https://github.com/pseudosavant/sql-agent-cli/compare/v0.13.0...HEAD
+[Unreleased]: https://github.com/pseudosavant/sql-agent-cli/compare/v0.14.0...HEAD
+[0.14.0]: https://github.com/pseudosavant/sql-agent-cli/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/pseudosavant/sql-agent-cli/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/pseudosavant/sql-agent-cli/compare/v0.11.0...v0.12.0

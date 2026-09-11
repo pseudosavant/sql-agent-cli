@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "sql-agent-cli"
-version = "0.13.0"
+version = "0.14.0"
 description = "Read-only SQL CLI for agentic workflows"
 readme = "README.md"
 license = "MIT"
@@ -28,6 +28,8 @@ classifiers = [
   "Topic :: Utilities",
 ]
 dependencies = [
+  "prompt-toolkit>=3.0.48",
+  "tomlkit>=0.13.2",
   "packaging>=23.2",
   "PyYAML>=6.0",
   "PyMySQL[rsa]>=1.1.0",

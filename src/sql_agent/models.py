@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, fields
+from dataclasses import asdict, dataclass, field, fields
+from pathlib import Path
 from typing import Any
 
 NETWORK_ENGINES = {"mysql", "mariadb", "postgres"}
@@ -28,20 +29,24 @@ class Target:
     port: int | None = None
     path: str | None = None
     ssl_mode: str | None = None
+    ssl_ca: str | None = None
+    auth: str | None = None
+    auth_file: str | None = None
+    service: str | None = None
+    unix_socket: str | None = None
+    credential_id: str | None = None
     max_rows: int | None = None
     connect_timeout_seconds: int | None = None
     query_timeout_seconds: int | None = None
-    password: str | None = None
+    password: str | None = field(default=None, repr=False)
 
     def merged(self, overlay: Target | None) -> Target:
         if overlay is None:
             return Target(**asdict(self))
         merged: dict[str, Any] = {}
-        for field in fields(self):
-            value = getattr(overlay, field.name)
-            merged[field.name] = (
-                value if value is not None else getattr(self, field.name)
-            )
+        for item in fields(self):
+            value = getattr(overlay, item.name)
+            merged[item.name] = value if value is not None else getattr(self, item.name)
         return Target(**merged)
 
     def with_defaults(self, defaults: Defaults) -> Target:
@@ -64,6 +69,12 @@ class Target:
             "port": self.port,
             "path": self.path,
             "ssl_mode": self.ssl_mode,
+            "ssl_ca": self.ssl_ca,
+            "auth": self.auth,
+            "auth_file": self.auth_file,
+            "service": self.service,
+            "unix_socket": self.unix_socket,
+            "credential_id": self.credential_id,
             "max_rows": self.max_rows,
             "connect_timeout_seconds": self.connect_timeout_seconds,
             "query_timeout_seconds": self.query_timeout_seconds,
@@ -75,6 +86,8 @@ class Target:
 class AppConfig:
     defaults: Defaults
     targets: dict[str, Target]
+    source_path: Path | None = field(default=None, repr=False)
+    source_bytes: bytes | None = field(default=None, repr=False)
 
 
 @dataclass

@@ -5,8 +5,9 @@ from __future__ import annotations
 import argparse
 import io
 import json
+import sqlite3
 import tempfile
-from contextlib import redirect_stderr, redirect_stdout
+from contextlib import closing, redirect_stderr, redirect_stdout
 from importlib.metadata import version
 from pathlib import Path
 from unittest.mock import patch
@@ -51,6 +52,42 @@ def smoke(expected_source: str) -> None:
                 == "valid"
             )
             assert list(path.parent.iterdir()) == [path]
+            database = Path(temporary) / "sample.db"
+            configuration = Path(temporary) / "config.toml"
+            with closing(sqlite3.connect(database)) as connection:
+                connection.execute("CREATE TABLE sample (value INTEGER)")
+            stdout, stderr = io.StringIO(), io.StringIO()
+            with redirect_stdout(stdout), redirect_stderr(stderr):
+                assert (
+                    main(
+                        [
+                            "setup",
+                            "--format",
+                            "json",
+                            str(database),
+                            "--config",
+                            str(configuration),
+                            "--non-interactive",
+                        ]
+                    )
+                    == 0
+                ), stderr.getvalue()
+            report = json.loads(stdout.getvalue())
+            assert report["status"] == "ready"
+            assert report["skill_ready"]
+            assert report["verification"]["visible_relations"] == 1
+            assert not configuration.with_name("credentials.toml").exists()
+            stdout, stderr = io.StringIO(), io.StringIO()
+            with (
+                redirect_stdout(stdout),
+                redirect_stderr(stderr),
+                patch("sys.stdin", io.StringIO()),
+            ):
+                assert (
+                    main(["--config", str(configuration), "PRAGMA table_info(sample)"])
+                    == 0
+                ), stderr.getvalue()
+            assert json.loads(stdout.getvalue())["result"]["rows"][0][1] == "value"
     print(
         f"Installed distribution smoke passed: {expected_source}, version {__version__}"
     )

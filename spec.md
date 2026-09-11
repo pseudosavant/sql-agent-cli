@@ -24,7 +24,7 @@ License:
 
 Release status:
 
-- 0.13.0 adds managed skill synchronization while the public contracts are stabilized for 1.0.
+- 0.14.0 adds guided setup, saved credentials, and read-only readiness checks while the public contracts are stabilized for 1.0.
 - The documented CLI, config, JSON, stdout/stderr, and exit-code behavior in this spec is the intended 1.0 public contract.
 
 ---
@@ -277,7 +277,7 @@ Management state lives under the supported YAML `metadata` mapping. `managed-by`
 
 The hash covers the entire normalized UTF-8 file with only the hash field's value replaced by `""`. Verification uses the installed file's original formatting, without YAML reserialization or comparison with the current bundled hash. CRLF and CR normalize to LF. The hash detects modifications and is not a signature.
 
-Normal CLI runs, including help, version, about, inspection, and rendering, synchronize only an existing managed skill in the standard location. All skill-management commands skip this check. PEP 440 comparison determines whether the installed version is older, equal, or newer. Equal and newer versions are never automatically replaced. A pristine older version is updated. An older skill with a missing, malformed, or mismatched hash is preserved with a stderr recommendation to run `uvx sql-agent-cli skill install --force`.
+Query and informational CLI runs, including help, version, about, and rendering, synchronize only an existing managed skill in the standard location. Configuration, targets, and skill-management commands skip this check. Setup explicitly installs the skill after database verification. PEP 440 comparison determines whether the installed version is older, equal, or newer. Equal and newer versions are never automatically replaced. A pristine older version is updated. An older skill with a missing, malformed, or mismatched hash is preserved with a stderr recommendation to run `uvx sql-agent-cli skill install --force`.
 
 The legacy `<!-- managed-by: sql-agent-cli -->` marker remains recognized unless parsed metadata names a different manager. Unversioned legacy skills are treated as version 0. Missing or malformed managed versions trigger a fresh replacement before hash checks. Newly generated skills use only front matter management metadata.
 
@@ -473,7 +473,7 @@ Row count semantics:
 1. Successful query payloads are written to stdout.
 2. Diagnostics and errors are written to stderr.
 3. Failed normal queries do not emit partial stdout payloads.
-4. `config check --format json` is the deliberate exception: it emits a complete diagnostic payload on stdout and returns exit code `1` if any selected target fails.
+4. `setup` and `config check --format json` emit diagnostic reports even on failure. Runtime failures return 1. Missing or invalid input returns 2.
 
 ---
 
@@ -527,17 +527,27 @@ This is the preferred approach because:
 2. all connection details live in exactly one place
 3. renaming or editing a target does not require syncing duplicated settings
 
+## First-time setup
+
+`sql-agent-cli setup [RESOURCE]` verifies a database, saves its named target, and installs the managed skill in `~/.agents/skills/sql-agent-cli/SKILL.md`. No agent-specific copy or link is created. Existing skill integrity, unmanaged-content, and newer-version protections remain unchanged.
+
+RESOURCE is a password-free PostgreSQL, MySQL, or MariaDB URL, or an existing SQLite path. Network setup resolves identity from the resource, explicit connection flags, the selected target, and native connection sources before asking for missing fields. The first target is named default unless specified. Adding a named target preserves an existing default. SQLite paths are saved absolutely.
+
+Setup accepts `--target`, existing connection flags, `--auth auto|native|managed`, `--auth-file`, `--service`, `--unix-socket`, `--ssl-ca`, `--replace-password`, `--non-interactive`, `--config`, `--credentials-file`, and `--format json|text`. Text is the default. Automation can select JSON explicitly with `--format json`. Interactive input requires terminal stdin and stderr. Password input uses asterisk masking and no history. Prompts, progress, and errors go to stderr. Non-interactive setup never reads stdin or prompts.
+
+Verification uses one read-only session for a constant query and a bounded catalog query. It reports authentication, session mode, catalog visibility, and transport identity. No application rows or write probes are used. Table access, absence of write privileges, future validity, and access from another execution environment remain unverified. SQLite WAL sidecars and server audit events can still occur.
+
+Verification failures preserve existing local state. Success saves configuration and entered credentials before installing the skill. Skill failures report the saved database configuration separately. Repeated setup preserves unrelated targets, unknown configuration fields, comments, and credentials. Optimistic snapshot checks prevent overwriting concurrent configuration edits.
+
 ## Secret storage policy for v1
 
-V1 should prefer native engine credential mechanisms and non-interactive secret input over storing plaintext passwords in `~/.sql-agent-cli/config.toml`.
+Ordinary configuration contains no managed passwords. Entered setup passwords are stored in a separate credentials.toml beside the selected configuration file. Files use normal inherited permissions and the process umask. No keyring or custom restrictive ACL is required. Native PostgreSQL password-file rules still apply to native files.
 
-Recommended policy:
+Credentials have opaque identifiers and bind to the engine, host, port, database, login, socket, and service. Replacements are verified, staged under new identifiers, and selected by an atomic configuration update. Failed saves clean up the staged entry. Unused older entries are removed after a successful switch. A process crash can leave an unused entry.
 
-1. config stores target selection and non-secret defaults first
-2. credentials should be resolved through native engine mechanisms where practical
-3. `--password-stdin` is the generic fallback for automation
-4. `--prompt-password` may exist as an optional human convenience
-5. plaintext passwords in `~/.sql-agent-cli/config.toml` should not be the preferred design
+Passwords never appear in command arguments, public configuration, prompts in agent chat, or diagnostics. Driver exceptions are classified without echoing raw messages. Environment secrets are never persisted. Short-lived tokens are acquired and refreshed externally.
+
+Configuration path precedence is `--config`, `SQL_AGENT_CLI_CONFIG`, then ~/.sql-agent-cli/config.toml. Credential path precedence is `--credentials-file`, `SQL_AGENT_CLI_CREDENTIALS_FILE`, then credentials.toml beside the selected config. Paths must differ.
 
 ## Target shape
 
@@ -568,66 +578,30 @@ Notes:
 
 ## Native credential support
 
-The tool should reuse existing engine conventions where practical instead of inventing a separate credential system for every database.
+PostgreSQL retains libpq authentication, including PGPASSFILE, PGPASSWORD, PGSERVICE, and PGSERVICEFILE. Missing connection fields may come from the selected service or PG environment. Password-file hints follow libpq's Windows APPDATA location and Unix ~/.pgpass location. Service discovery checks the user file or PGSERVICEFILE and an explicit PGSYSCONFDIR.
 
-### PostgreSQL
+MySQL and MariaDB retain client option files. A target can select an auth_file. Otherwise the existing APPDATA/MySQL/.my.cnf and ~/.my.cnf search order remains. Connection fields, including native port and socket, are resolved before built-in defaults. mysql_config_editor login paths remain unsupported.
 
-Preferred support:
-
-1. libpq-style environment variables such as `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER`, and `PGPASSWORD`
-2. `.pgpass`
-3. optionally `PGSERVICE` later if implementation remains clean
-
-Behavior:
-
-1. if explicit CLI/config target fields are missing, the tool may resolve compatible PostgreSQL defaults from libpq-style environment variables
-2. `.pgpass` support is desirable because it is already standard for non-interactive PostgreSQL use
-3. on Windows, the tool should support both `%APPDATA%\postgresql\pgpass.conf` and `~/.pgpass`
-4. on non-Windows platforms, the tool should support `~/.pgpass`
-
-### MySQL and MariaDB
-
-Preferred support:
-
-1. standard MySQL option files such as `~/.my.cnf` / `my.cnf`
-
-Behavior:
-
-1. using native option-file resolution is preferred over introducing a custom password store
-2. support for MySQL login-path credentials managed by `mysql_config_editor` via `.mylogin.cnf` is explicitly deferred from initial v1
-3. on Windows, the tool should support both `%APPDATA%\MySQL\.my.cnf` and `~/.my.cnf` if implementation remains straightforward
-4. on non-Windows platforms, the tool should support `~/.my.cnf`
-
-### Generic fallback
-
-For engines where native resolution is unavailable or inconvenient, support:
-
-1. `--password-stdin`
-2. optional `--prompt-password`
-
-Rationale:
-
-- agents need non-interactive secret input
-- humans sometimes want a prompt
-- native client mechanisms are often already configured on developer machines
+`--password-stdin` and `--prompt-password` remain supported for queries and single-target checks. Offline checks and --all reject password-input flags. Native authentication is also available through `--auth native` when a saved credential should be bypassed.
 
 ## SSL behavior
 
 Required behavior:
 
-1. default to `ssl_mode = "required"` for MySQL and MariaDB targets
-2. default to `ssl_mode = "required"` for PostgreSQL targets
+1. new network targets created by setup default to `ssl_mode = "verify-full"`
+2. existing targets retain their mode and direct legacy connections default to `required`
 3. support a per-target config value for `ssl_mode`
-4. support a shared user-facing `ssl_mode` model of `required`, `preferred`, or `disabled`
+4. support a shared user-facing `ssl_mode` model of `verify-full`, `required`, `preferred`, or `disabled`
 5. map the shared `ssl_mode` values onto engine-specific driver options internally
-6. support an explicit CLI `--ssl-mode {required,preferred,disabled}` override
+6. support an explicit CLI `--ssl-mode {verify-full,required,preferred,disabled}` override
 7. support a CLI `--insecure` shorthand that means `--ssl-mode preferred`
 8. support an explicit less-secure override when needed, such as `--ssl-mode disabled`
 9. `--insecure` should not modify config permanently
 10. `required` must fail if encrypted transport is not negotiated
 11. `preferred` attempts TLS but permits a plaintext fallback
 12. `disabled` prohibits TLS
-13. `required` guarantees transport encryption, not certificate identity verification by itself; CA and hostname verification depend on native client trust configuration
+13. `required` guarantees transport encryption without guaranteeing server identity
+14. `verify-full` requires certificate and hostname verification for TCP connections. `ssl_ca` selects a private CA file
 
 Rationale:
 
@@ -654,7 +628,7 @@ Behavior requirements:
 1. `config show` displays the effective defaults and configured targets with credential sources described but secrets redacted
 2. `config show` should indicate whether each target is complete enough to run
 3. `config check` defaults to the configured default target, `--target NAME` checks one named target, and `--all` is required to contact every configured target
-4. `config check` executes only an internal `SELECT 1`, returns non-secret target and credential-source diagnostics, and supports text and JSON output
+4. `config check` uses the setup verifier without saving files or synchronizing skills. It supports --offline, source diagnostics, text, and JSON output
 5. `config check --all` continues after individual failures and returns exit code `1` if any selected target fails
 6. normal queries do not require a successful preflight check
 7. config-writing commands create the file if it does not exist
@@ -721,36 +695,9 @@ Recommended precedence:
 3. default target named by `[defaults].target`
 4. global defaults from `[defaults]` for non-connection behavior such as output format and row limits
 
-Credential precedence should be documented per engine, but the generic model should be:
+Password precedence is explicit `--password-stdin` or `--prompt-password`, then SQL_AGENT_CLI_PASSWORD, then PostgreSQL PGPASSWORD, then the referenced managed credential, then native driver authentication. Explicit native mode skips the managed file. Unavailable referenced credentials fail without silently changing sources. Explicit environment input can bypass an unavailable file.
 
-1. `--password-stdin`
-2. `--prompt-password`
-3. engine-native credential mechanisms
-4. fail with a clear auth error
-
-### PostgreSQL credential precedence
-
-Recommended order:
-
-1. connection identity fields explicitly provided on the CLI
-2. selected target fields from config
-3. libpq-style environment variables for any still-missing connection fields
-4. `--password-stdin`
-5. `--prompt-password`
-6. `PGPASSWORD`
-7. `.pgpass` lookup for password resolution using the resolved host/port/database/user tuple
-8. fail with a clear auth error
-
-### MySQL and MariaDB credential precedence
-
-Recommended order:
-
-1. connection identity fields explicitly provided on the CLI
-2. selected target fields from config
-3. `--password-stdin`
-4. `--prompt-password`
-5. standard MySQL option files for any still-missing connection fields and password resolution
-6. fail with a clear auth error
+Connection fields use explicit CLI values, then selected target fields, then native fields, then built-in defaults. Target selection uses --target, then a one-off --engine, then SQL_AGENT_CLI_TARGET, then the configured default.
 
 ## Query source precedence
 

@@ -80,13 +80,21 @@ Markdown and table output include target, statement type, row count, and truncat
 }
 ```
 
-Failed result objects use `status: "error"` and add `error.type` and `error.message`. Configured passwords are not exposed.
+Failed result objects use `status: "error"` and include `error.type`, `error.code`, `error.message`, and `error.next_steps`. Raw driver text and configured passwords are not exposed.
+
+Additional fields include `offline`, `config_path`, `credentials_path`, `skill`, `skill_ready`, and `database_ready`. Each result includes `credential_source`, `credential_persistence`, and `verification` when available. Verification distinguishes connection, authentication, read-only session, catalog, and transport identity. An offline check sets `database_ready` to null and verification to not checked. It does not prove authentication or connectivity.
+
+## Setup output
+
+Setup defaults to a human-readable text report. `setup --format json` reports `status`, `database_ready`, `configuration_saved`, and `skill_ready`. Once resolved, it adds paths, target, credential source, verification stages, and skill installation results. Failed setup includes a safe `error` object. A protected skill can cause failure after configuration is saved. Clients must inspect the separate readiness fields.
+
+`--format text` explicitly selects the default text report. Interactive prompts and progress remain on stderr. Argument-parser failures happen before a report is available.
 
 ## Stdout and stderr
 
 Stdout is reserved for payload output. Diagnostics and errors go to stderr. Normal query failures emit no stdout payload.
 
-`config check --format json` is the intentional exception. It writes its complete diagnostic payload to stdout and returns exit code `1` when any selected target fails.
+`setup --format json` and `config check --format json` retain diagnostic payloads on failure. Runtime failures return 1. Missing or invalid input returns 2.
 
 Skill synchronization notices and maintenance warnings go to stderr. They do not change the primary command exit status or JSON stdout.
 
@@ -100,7 +108,7 @@ Skill synchronization notices and maintenance warnings go to stderr. They do not
 
 ## Compatibility policy
 
-The supported config schema consists of the documented `[defaults]` and `[targets.NAME]` fields. Unknown fields are ignored when reading and may be removed by config-writing commands. Do not use the config file as an extension store.
+The supported config schema consists of the documented `[defaults]` and `[targets.NAME]` fields. Unknown fields are ignored when reading and preserved by config-writing commands. Unrelated comments and tables are preserved. Concurrent edits cause a safe failure instead of replacement.
 
 Starting with 1.0.0, the project follows semantic versioning for the documented CLI, config, JSON, stdout, stderr, and exit-code contracts. Additive compatible behavior ships in minor releases. Intended breaking changes require a major release.
 

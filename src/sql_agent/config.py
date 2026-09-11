@@ -1,14 +1,20 @@
 from __future__ import annotations
 
+import configparser
 import json
 import os
 import stat
 import sys
 import tomllib
+from dataclasses import fields
 from pathlib import Path
 from typing import Any
 
+import tomlkit
+
+from .errors import ConfigurationError, UsageError
 from .models import NETWORK_ENGINES, AppConfig, Defaults, Target
+from .storage import atomic_write, locked, read_bytes
 
 CONFIG_PATH = Path("~/.sql-agent-cli/config.toml").expanduser()
 DEFAULT_FORMAT = "json"
@@ -34,61 +40,170 @@ def default_port_for_engine(engine: str | None) -> int | None:
     return None
 
 
-def load_config(path: Path = CONFIG_PATH) -> AppConfig:
-    if not path.exists():
-        return AppConfig(defaults=Defaults(), targets={})
-
-    with path.open("rb") as handle:
-        raw = tomllib.load(handle)
-
-    defaults_raw = raw.get("defaults", {})
-    defaults = Defaults(
-        target=defaults_raw.get("target"),
-        format=defaults_raw.get("format"),
-        max_rows=_int_or_none(defaults_raw.get("max_rows")),
-        connect_timeout_seconds=_int_or_none(
-            defaults_raw.get("connect_timeout_seconds")
-        ),
-        query_timeout_seconds=_int_or_none(defaults_raw.get("query_timeout_seconds")),
+def config_path(path: Path | None = None) -> Path:
+    return (
+        (
+            path
+            or Path(os.getenv("SQL_AGENT_CLI_CONFIG") or "~/.sql-agent-cli/config.toml")
+        )
+        .expanduser()
+        .absolute()
     )
 
-    targets: dict[str, Target] = {}
-    for name, target_raw in raw.get("targets", {}).items():
-        targets[name] = Target(
-            name=name,
-            engine=normalize_engine(target_raw.get("engine")),
-            database=target_raw.get("database"),
-            user=target_raw.get("user"),
-            host=target_raw.get("host"),
-            port=_int_or_none(target_raw.get("port")),
-            path=target_raw.get("path"),
-            ssl_mode=target_raw.get("ssl_mode"),
-            max_rows=_int_or_none(target_raw.get("max_rows")),
-            connect_timeout_seconds=_int_or_none(
-                target_raw.get("connect_timeout_seconds")
-            ),
-            query_timeout_seconds=_int_or_none(target_raw.get("query_timeout_seconds")),
+
+def load_config(path: Path | None = None) -> AppConfig:
+    path = config_path(path)
+    original = read_bytes(path)
+    try:
+        raw = (
+            tomllib.loads(original.decode("utf-8-sig")) if original is not None else {}
         )
-    return AppConfig(defaults=defaults, targets=targets)
+        defaults = Defaults(
+            **{f.name: raw.get("defaults", {}).get(f.name) for f in fields(Defaults)}
+        )
+        for item in fields(Defaults):
+            value = getattr(defaults, item.name)
+            if value is None:
+                continue
+            if item.name in {"target", "format"}:
+                if not isinstance(value, str):
+                    raise TypeError
+            elif not isinstance(value, int) or isinstance(value, bool) or value < 1:
+                raise ValueError
+        if defaults.format and defaults.format not in {
+            "json",
+            "markdown",
+            "table",
+            "csv",
+        }:
+            raise ValueError
+        validate_target(Target(name=defaults.target))
+        targets = {}
+        for name, values in raw.get("targets", {}).items():
+            if not isinstance(values, dict):
+                raise TypeError
+            target = Target(
+                name=name,
+                **{
+                    f.name: values[f.name]
+                    for f in fields(Target)
+                    if f.name not in {"name", "password"} and f.name in values
+                },
+            )
+            target.engine = normalize_engine(target.engine)
+            validate_target(target)
+            targets[name] = target
+        return AppConfig(defaults, targets, path, original)
+    except (ValueError, TypeError, AttributeError):
+        raise ConfigurationError(
+            f"Invalid configuration. Check TOML syntax and target fields:\n  {path}\nRun uvx sql-agent-cli config --help. File contents were not displayed."
+        ) from None
 
 
-def save_config(config: AppConfig, path: Path = CONFIG_PATH) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(_dump_toml(config), encoding="utf-8")
+def save_config(config: AppConfig, path: Path | None = None) -> None:
+    path = config_path(path or config.source_path)
+    with locked(path):
+        current = read_bytes(path)
+        if config.source_path == path and current != config.source_bytes:
+            raise ConfigurationError(
+                "Configuration changed during setup. No replacement was made. Rerun setup."
+            )
+        try:
+            document = (
+                tomlkit.parse(current.decode("utf-8-sig"))
+                if current
+                else tomlkit.document()
+            )
+            defaults = document.setdefault("defaults", tomlkit.table())
+            _update_table(
+                defaults, config.defaults.to_dict(), {f.name for f in fields(Defaults)}
+            )
+            targets = document.setdefault("targets", tomlkit.table())
+            for name in list(targets):
+                if name not in config.targets:
+                    del targets[name]
+            for name, target in config.targets.items():
+                validate_target(target)
+                values = target.public_dict()
+                values.pop("name", None)
+                table = targets.setdefault(name, tomlkit.table())
+                _update_table(
+                    table,
+                    values,
+                    {f.name for f in fields(Target)} - {"password", "name"},
+                )
+            content = tomlkit.dumps(document).encode("utf-8")
+        except (ValueError, TypeError, AttributeError):
+            raise ConfigurationError(
+                "Cannot update configuration. Check its TOML structure. Existing content was preserved."
+            ) from None
+        atomic_write(path, content, current)
+        config.source_path, config.source_bytes = path, content
+
+
+def _update_table(table, values: dict, known: set[str]) -> None:
+    for key in known - values.keys():
+        table.pop(key, None)
+    for key, value in values.items():
+        if table.get(key) != value:
+            table[key] = value
+
+
+def validate_target(target: Target) -> None:
+    for item in fields(Target):
+        value = getattr(target, item.name)
+        if value is None or item.name == "password":
+            continue
+        if item.name in {
+            "port",
+            "max_rows",
+            "connect_timeout_seconds",
+            "query_timeout_seconds",
+        }:
+            if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+                raise UsageError(f"{item.name} must be a positive integer.")
+        elif not isinstance(value, str) or any(ord(c) < 32 for c in value):
+            raise UsageError(
+                f"Invalid {item.name}. Control characters are not allowed."
+            )
+    if target.port and target.port > 65535:
+        raise UsageError("Port must be between 1 and 65535.")
+    if target.engine and target.engine not in NETWORK_ENGINES | {"sqlite"}:
+        raise UsageError(
+            "Unsupported engine. Choose postgres, mysql, mariadb, or sqlite."
+        )
+    if target.ssl_mode and target.ssl_mode not in {
+        "required",
+        "preferred",
+        "disabled",
+        "verify-full",
+    }:
+        raise UsageError("Unsupported TLS mode. Run uvx sql-agent-cli --help.")
+    if target.auth and target.auth not in {"auto", "native", "managed"}:
+        raise UsageError("Authentication source must be auto, native, or managed.")
+    for value in (target.host, target.database, target.user):
+        if value and ("://" in value or "=" in value):
+            raise UsageError(
+                "Use individual connection fields or a password-free URL with setup. Connection strings are not accepted as field values."
+            )
 
 
 def resolve_target(config: AppConfig, args: Any) -> Target:
     requested_name = getattr(args, "target", None)
     explicit_engine = getattr(args, "engine", None)
     selected_name = requested_name or (
-        None if explicit_engine else config.defaults.target
+        None
+        if explicit_engine
+        else os.getenv("SQL_AGENT_CLI_TARGET") or config.defaults.target
     )
     base = Target(name=selected_name)
     if selected_name:
         try:
             base = config.targets[selected_name]
         except KeyError as exc:
-            raise ValueError(f"Unknown target: {selected_name}") from exc
+            raise UsageError(
+                "Unknown target. Run uvx sql-agent-cli targets --format json."
+            ) from exc
 
     overlay = Target(
         name=base.name or "ephemeral",
@@ -99,6 +214,11 @@ def resolve_target(config: AppConfig, args: Any) -> Target:
         port=getattr(args, "port", None),
         path=getattr(args, "path", None),
         ssl_mode=getattr(args, "ssl_mode", None),
+        ssl_ca=getattr(args, "ssl_ca", None),
+        auth=getattr(args, "auth", None),
+        auth_file=getattr(args, "auth_file", None),
+        service=getattr(args, "service", None),
+        unix_socket=getattr(args, "unix_socket", None),
         max_rows=getattr(args, "max_rows", None),
         connect_timeout_seconds=getattr(args, "connect_timeout_seconds", None),
         query_timeout_seconds=getattr(args, "query_timeout_seconds", None),
@@ -109,6 +229,10 @@ def resolve_target(config: AppConfig, args: Any) -> Target:
     target = base.merged(overlay).with_defaults(config.defaults)
     target.name = target.name or "ephemeral"
     target.engine = normalize_engine(target.engine)
+    validate_target(target)
+    for key, value in native_connection_fields(target).items():
+        if getattr(target, key) is None:
+            setattr(target, key, value)
     if target.engine in NETWORK_ENGINES and target.port is None:
         target.port = default_port_for_engine(target.engine)
     if target.engine in NETWORK_ENGINES and target.ssl_mode is None:
@@ -119,10 +243,12 @@ def resolve_target(config: AppConfig, args: Any) -> Target:
         target.connect_timeout_seconds = DEFAULT_CONNECT_TIMEOUT_SECONDS
     if target.query_timeout_seconds is None:
         target.query_timeout_seconds = DEFAULT_QUERY_TIMEOUT_SECONDS
+    validate_target(target)
     return target
 
 
-def build_show_payload(config: AppConfig, path: Path = CONFIG_PATH) -> dict[str, Any]:
+def build_show_payload(config: AppConfig, path: Path | None = None) -> dict[str, Any]:
+    path = config_path(path or config.source_path)
     return {
         "config_path": str(path),
         "config_exists": path.exists(),
@@ -148,14 +274,28 @@ def credential_hints_for_target(target: Target) -> dict[str, Any]:
             ],
             "env_vars": {
                 name: bool(os.getenv(name))
-                for name in ["PGHOST", "PGPORT", "PGDATABASE", "PGUSER", "PGPASSWORD"]
+                for name in [
+                    "PGHOST",
+                    "PGPORT",
+                    "PGDATABASE",
+                    "PGUSER",
+                    "PGPASSWORD",
+                    "PGPASSFILE",
+                    "PGSERVICE",
+                    "PGSERVICEFILE",
+                    "SQL_AGENT_CLI_PASSWORD",
+                ]
             },
         }
     if engine in {"mysql", "mariadb"}:
         return {
             "option_file_candidates": [
                 {"path": str(path), "exists": path.exists()}
-                for path in mysql_option_file_paths()
+                for path in (
+                    [Path(target.auth_file).expanduser()]
+                    if target.auth_file
+                    else mysql_option_file_paths()
+                )
             ]
         }
     if engine == "sqlite":
@@ -174,11 +314,14 @@ def can_attempt_connection(target: Target) -> bool:
 
 
 def postgres_auth_paths() -> list[Path]:
+    if os.getenv("PGPASSFILE"):
+        return [Path(os.environ["PGPASSFILE"]).expanduser()]
     candidates: list[Path] = []
     appdata = os.getenv("APPDATA")
-    if appdata:
+    if os.name == "nt" and appdata:
         candidates.append(Path(appdata) / "postgresql" / "pgpass.conf")
-    candidates.append(Path("~/.pgpass").expanduser())
+    else:
+        candidates.append(Path("~/.pgpass").expanduser())
     return _unique_paths(candidates)
 
 
@@ -199,11 +342,82 @@ def preferred_mysql_option_file_path() -> Path:
     return mysql_option_file_paths()[0]
 
 
-def find_mysql_option_file() -> Path | None:
+def find_mysql_option_file(target: Target | None = None) -> Path | None:
+    if target and target.auth_file:
+        return Path(target.auth_file).expanduser()
     for path in mysql_option_file_paths():
         if path.exists():
             return path
     return None
+
+
+def native_connection_fields(target: Target) -> dict:
+    """Read only a selected native source. Never return or display its password."""
+    result = {}
+    try:
+        if target.engine == "postgres":
+            service = target.service or os.getenv("PGSERVICE")
+            if service:
+                result["service"] = service
+                default = (
+                    Path(os.environ["APPDATA"]) / "postgresql" / ".pg_service.conf"
+                    if os.name == "nt" and os.getenv("APPDATA")
+                    else Path.home() / ".pg_service.conf"
+                )
+                paths = [Path(os.getenv("PGSERVICEFILE") or default)]
+                if os.getenv("PGSYSCONFDIR"):
+                    paths.append(Path(os.environ["PGSYSCONFDIR"]) / "pg_service.conf")
+                for path in paths:
+                    parser = configparser.RawConfigParser()
+                    if path.exists():
+                        with path.open(encoding="utf-8") as handle:
+                            parser.read_file(handle)
+                    if parser.has_section(service):
+                        for key, option in {
+                            "host": "host",
+                            "port": "port",
+                            "database": "dbname",
+                            "user": "user",
+                            "ssl_ca": "sslrootcert",
+                        }.items():
+                            if parser.has_option(service, option):
+                                result[key] = parser.get(service, option)
+                        break
+            for key, variable in {
+                "host": "PGHOST",
+                "port": "PGPORT",
+                "database": "PGDATABASE",
+                "user": "PGUSER",
+            }.items():
+                if key not in result and os.getenv(variable):
+                    result[key] = os.environ[variable]
+        elif target.engine in {"mysql", "mariadb"}:
+            path = find_mysql_option_file(target)
+            if path:
+                from pymysql.optionfile import Parser
+
+                parser = Parser()
+                with path.open(encoding="utf-8") as handle:
+                    parser.read_file(handle)
+                for key, option in {
+                    "host": "host",
+                    "port": "port",
+                    "database": "database",
+                    "user": "user",
+                    "unix_socket": "socket",
+                    "ssl_ca": "ssl-ca",
+                }.items():
+                    if parser.has_option("client", option):
+                        result[key] = parser.get("client", option)
+        if result.get("ssl_ca") == "system":
+            result.pop("ssl_ca")
+        if "port" in result:
+            result["port"] = int(result["port"])
+        return result
+    except (OSError, ValueError, configparser.Error):
+        raise ConfigurationError(
+            "Cannot read the selected native authentication configuration. Check its path, access, and syntax. File contents were not displayed."
+        ) from None
 
 
 def create_native_auth_template(engine: str, target: Target | None) -> Path:
@@ -271,60 +485,6 @@ def _native_auth_available(engine: str) -> bool:
     if engine in {"mysql", "mariadb"}:
         return find_mysql_option_file() is not None
     return False
-
-
-def _dump_toml(config: AppConfig) -> str:
-    lines: list[str] = []
-    lines.append("[defaults]")
-    defaults = config.defaults.to_dict()
-    for key in [
-        "target",
-        "format",
-        "max_rows",
-        "connect_timeout_seconds",
-        "query_timeout_seconds",
-    ]:
-        if key in defaults:
-            lines.append(f"{key} = {_toml_value(defaults[key])}")
-    if not defaults:
-        lines.append("# Configure default target and output options here.")
-    lines.append("")
-
-    for name in sorted(config.targets):
-        target = config.targets[name]
-        lines.append(f"[targets.{name}]")
-        public = target.public_dict()
-        public.pop("name", None)
-        for key in [
-            "engine",
-            "host",
-            "port",
-            "database",
-            "user",
-            "path",
-            "ssl_mode",
-            "max_rows",
-            "connect_timeout_seconds",
-            "query_timeout_seconds",
-        ]:
-            if key in public:
-                lines.append(f"{key} = {_toml_value(public[key])}")
-        lines.append("")
-    return "\n".join(lines).strip() + "\n"
-
-
-def _toml_value(value: Any) -> str:
-    if isinstance(value, bool):
-        return "true" if value else "false"
-    if isinstance(value, int):
-        return str(value)
-    return json.dumps(str(value))
-
-
-def _int_or_none(value: Any) -> int | None:
-    if value is None:
-        return None
-    return int(value)
 
 
 def _try_restrict_permissions(path: Path) -> None:

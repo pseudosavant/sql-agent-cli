@@ -16,7 +16,7 @@ bootstrap_package()
 
 from sql_agent import config
 from sql_agent.cli import main as cli_main
-from sql_agent.models import AppConfig, Defaults, QueryExecutionResult, Target
+from sql_agent.models import AppConfig, Defaults, Target
 
 
 def _test_temp_dir(name: str) -> Path:
@@ -125,24 +125,24 @@ class ConfigTests(unittest.TestCase):
             },
         )
 
-        def execute_check(target: Target, sql: str) -> QueryExecutionResult:
-            self.assertEqual(sql, "SELECT 1 AS sql_agent_cli_check")
+        def execute_check(target: Target) -> dict:
+            from sql_agent.errors import diagnostic
+
             if target.name == "bad":
-                raise RuntimeError(
-                    "connection failed\nwithout exposing credentials; password=do-not-print"
-                )
-            return QueryExecutionResult(
-                columns=["sql_agent_cli_check"],
-                rows=[(1,)],
-                returned_row_count=1,
-                truncated=False,
-            )
+                return {
+                    "status": "failed",
+                    "error": diagnostic(
+                        RuntimeError("connection failed password=do-not-print"),
+                        target.name,
+                    ),
+                }
+            return {"status": "passed"}
 
         stdout = io.StringIO()
         stderr = io.StringIO()
         with (
             patch("sql_agent.cli.load_config", return_value=app_config),
-            patch("sql_agent.cli._execute_query", side_effect=execute_check),
+            patch("sql_agent.cli.verify_target", side_effect=execute_check),
             patch("sys.stdout", stdout),
             patch("sys.stderr", stderr),
         ):
@@ -159,7 +159,7 @@ class ConfigTests(unittest.TestCase):
         )
         self.assertEqual(
             payload["results"][0]["error"]["message"],
-            "connection failed without exposing credentials; password=<redacted>",
+            "The database could not be reached. Check its endpoint, DNS, VPN, firewall, and this execution environment's network access.",
         )
         self.assertNotIn("do-not-print", stdout.getvalue())
 
@@ -175,8 +175,8 @@ class ConfigTests(unittest.TestCase):
             exit_code = cli_main(["config", "check"])
 
         self.assertEqual(exit_code, 2)
-        self.assertEqual(stdout.getvalue(), "")
-        self.assertIn("No target selected", stderr.getvalue())
+        self.assertIn("No target selected", stdout.getvalue())
+        self.assertEqual(stderr.getvalue(), "")
 
     def test_resolve_target_uses_default_target_and_defaults(self) -> None:
         app_config = AppConfig(

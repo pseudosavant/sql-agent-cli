@@ -2,25 +2,59 @@
 
 `sql-agent-cli` gives people and coding agents a safe, predictable way to inspect MySQL, MariaDB, PostgreSQL, and SQLite databases. It runs one read-only SQL statement at a time, rejects writes before connecting, and returns deterministic output that agents can parse reliably.
 
-## Prerequisite
-
-`sql-agent-cli` is designed to be used with [`uv`](https://docs.astral.sh/uv/getting-started/installation/). Install `uv` before continuing. The documented workflows and managed agent skill use `uvx` to run the tool without requiring a global installation.
-
 ## Quick start with an agent
 
-Install the managed agent skill:
+You need an existing database and access to it from the machine where your agent runs. For a network database, obtain its hostname, database name, and a login with read access. A password-free connection URL can supply those details. SQLite needs only an existing database file.
+
+Install [uv](https://docs.astral.sh/uv/getting-started/installation/), then run setup in your terminal. `uvx` obtains the CLI and its Python dependencies. No database client installation is required.
+
+### PowerShell
 
 ```powershell
-uvx sql-agent-cli skill install
+# Install uv if it is not already available.
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+
+# Open a new PowerShell terminal after installation.
+uvx sql-agent-cli setup
 ```
 
-Then use `$sql-agent-cli` in Codex, Claude Code, or another agent harness that supports skills:
+### Bash
 
-> Use $sql-agent-cli to show the ten most recently created users from my configured default database. Include their ID, name, and creation date.
+```bash
+# Install uv if it is not already available.
+curl -LsSf https://astral.sh/uv/install.sh | sh
 
-The skill teaches the agent to start with the configured default target, write bounded read-only queries, interpret structured results, and troubleshoot connection problems without exposing credentials.
+# Open a new terminal after installation.
+uvx sql-agent-cli setup
+```
 
-If you have not configured a database target yet, see [Configure a database target](#configure-a-database-target).
+Setup asks only for missing connection details. It masks password input with asterisks, verifies the database, saves the target and any entered password separately, and installs the managed skill in `~/.agents/skills/sql-agent-cli/SKILL.md`. Environment variables are optional. No separate test or skill installation command is needed.
+
+To skip connection questions, supply a password-free URL. These commands work in both shells. Replace the example connection details with yours:
+
+```text
+uvx sql-agent-cli setup "postgres://reader@db.example.com/app"
+uvx sql-agent-cli setup "mysql://reader@db.example.com/app"
+uvx sql-agent-cli setup "mariadb://reader@db.example.com/app"
+```
+
+For SQLite, use an existing file:
+
+```powershell
+uvx sql-agent-cli setup 'C:\data\app.db'
+```
+
+```bash
+uvx sql-agent-cli setup "$HOME/data/app.db"
+```
+
+Start a new agent session that discovers `~/.agents/skills`, then ask:
+
+> Use the sql-agent-cli skill to list the tables in my default database and explain their columns. Do not read application rows yet.
+
+Use your agent's skill picker if needed. This project supports the agent-agnostic location only. It does not install an agent-specific copy. A remote agent or container needs its own reachable database, configuration, credentials, and skill files.
+
+See [Setup and authentication](docs/setup.md) for required permissions, native authentication, private CAs, password renewal, multiple targets, and troubleshooting.
 
 ## Manage the agent skill
 
@@ -117,117 +151,47 @@ The CLI resolves the target in this order:
 
 1. A target selected with `--target NAME`
 2. A one-off target created with `--engine` and connection options
-3. The target named by `[defaults].target` in `~/.sql-agent-cli/config.toml`
+3. The target named by `SQL_AGENT_CLI_TARGET`
+4. The target named by `[defaults].target` in `~/.sql-agent-cli/config.toml`
 
 ## Configure a database target
 
-Saved targets keep connection details out of prompts and scripts. They also make the normal query command easier to remember.
+The first successful setup creates a default target. Repeat setup to verify and reuse it. Add a named target without changing the existing default:
 
-### SQLite
-
-```powershell
-uvx sql-agent-cli config add-target local --engine sqlite --path C:\data\app.db
-uvx sql-agent-cli config set-default-target local
-uvx sql-agent-cli "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name"
-```
-
-### PostgreSQL
-
-```powershell
-uvx sql-agent-cli config add-target reporting `
-  --engine postgres `
-  --host db.example.com `
-  --database app `
-  --user reader
-
+```text
+uvx sql-agent-cli setup
+uvx sql-agent-cli setup "postgres://reader@db.example.com/analytics" --target reporting
 uvx sql-agent-cli config set-default-target reporting
-uvx sql-agent-cli config check
 ```
 
-### MySQL or MariaDB
+Inspect configuration without exposing passwords or changing files:
 
-```powershell
-uvx sql-agent-cli config add-target dev `
-  --engine mysql `
-  --host db.example.com `
-  --database app `
-  --user reader
-
-uvx sql-agent-cli config set-default-target dev
-uvx sql-agent-cli config check
-```
-
-Inspect the effective configuration and available targets without revealing passwords:
-
-```powershell
+```text
 uvx sql-agent-cli targets
 uvx sql-agent-cli config show
+uvx sql-agent-cli config check --offline
 uvx sql-agent-cli config check --all
 ```
 
-The user configuration file is stored at `~/.sql-agent-cli/config.toml`:
+Ordinary settings live in `~/.sql-agent-cli/config.toml`. Entered passwords live in a separate `credentials.toml` beside it. Files use normal inherited permissions. The [setup guide](docs/setup.md) explains overrides and agent access.
 
-```toml
-[defaults]
-target = "dev"
-format = "json"
-max_rows = 200
-connect_timeout_seconds = 8
-query_timeout_seconds = 15
-
-[targets.dev]
-engine = "mysql"
-host = "db.example.com"
-port = 3306
-database = "app"
-user = "reader"
-ssl_mode = "required"
-
-[targets.reporting]
-engine = "postgres"
-host = "reporting.example.com"
-port = 5432
-database = "analytics"
-user = "report_reader"
-ssl_mode = "required"
-
-[targets.local_sqlite]
-engine = "sqlite"
-path = "C:/data/app.db"
-```
+Existing `config add-target`, `config set-default-target`, `config init-native-auth`, `--password-stdin`, and `--prompt-password` commands remain available.
 
 ## Authentication and TLS
 
-`sql-agent-cli` prefers native database credential mechanisms over password arguments.
+Setup reuses saved credentials or native authentication when available. Otherwise it offers a masked password prompt. `SQL_AGENT_CLI_PASSWORD` overrides saved or native credentials for the current execution environment. PostgreSQL also accepts `PGPASSWORD`. Neither is saved by setup.
 
-| Database | Preferred credential source |
-| --- | --- |
-| PostgreSQL | `PG*` environment variables or `.pgpass` |
-| MySQL and MariaDB | Native option files such as `~/.my.cnf` |
-| Any network database | Non-interactive `--password-stdin` fallback |
-| Interactive terminal | `--prompt-password` fallback |
-
-The CLI does not document or guarantee `MYSQL_PWD` as a public credential source.
-
-Create a native authentication template and prefill non-secret target values where possible:
-
-```powershell
-uvx sql-agent-cli config init-native-auth --engine postgres --target reporting
-uvx sql-agent-cli config init-native-auth --engine mysql --target dev
-```
-
-Passwords remain blank in generated templates.
-
-Encrypted transport is required by default for network databases:
+New network targets created by setup default to `verify-full`, which verifies the server certificate and hostname. Supply `--ssl-ca PATH` for a private CA. Existing targets keep their TLS setting.
 
 | Option | Behavior |
 | --- | --- |
-| `--ssl-mode required` | Require TLS and fail if encryption is not negotiated |
-| `--ssl-mode preferred` | Attempt TLS but allow a plaintext fallback |
-| `--ssl-mode disabled` | Prohibit TLS |
-| `--insecure` | Shorthand for `--ssl-mode preferred` |
+| `--ssl-mode verify-full` | Require TLS and verify the certificate and hostname |
+| `--ssl-mode required` | Require encryption without guaranteeing server identity |
+| `--ssl-mode preferred` | Attempt TLS but allow plaintext fallback |
+| `--ssl-mode disabled` | Disable TLS |
+| `--insecure` | Query shorthand for `--ssl-mode preferred` |
 
-`required` guarantees encryption. Certificate authority and hostname verification depend on the database client trust configuration. Keep `required` unless weaker transport behavior is explicitly acceptable.
+Legacy direct connections still default to `required`. The tool never weakens TLS automatically.
 
 ## Query inputs and output formats
 
@@ -281,7 +245,7 @@ These controls are defense in depth. They are not a substitute for database auth
 
 ## Troubleshooting
 
-After a setup, connection, authentication, or TLS failure, safely test the default target with an internal `SELECT 1`:
+After a connection failure, check the default target with a constant query and a bounded catalog query:
 
 ```powershell
 uvx sql-agent-cli config check
@@ -296,7 +260,7 @@ If target selection is unclear, list the configured targets:
 uvx sql-agent-cli targets --format json
 ```
 
-Normal queries should start with the default-target happy path. A preflight check is only needed after setup or when troubleshooting a failure.
+Normal queries should start with the default-target happy path. Setup already verifies the target. A check is useful when troubleshooting a later failure.
 
 ## Reference
 
@@ -306,7 +270,8 @@ Normal queries should start with the default-target happy path. A preflight chec
 | `uvx sql-agent-cli --target NAME "SELECT ..."` | Query a named target |
 | `uvx sql-agent-cli targets` | List targets and identify the default |
 | `uvx sql-agent-cli config show` | Show effective non-secret configuration |
-| `uvx sql-agent-cli config check` | Test connectivity with a safe `SELECT 1` |
+| `uvx sql-agent-cli setup` | Verify and save a database, then install its skill |
+| `uvx sql-agent-cli config check` | Check connectivity, read-only session, and catalog access |
 | `uvx sql-agent-cli config --help` | Show target-management commands |
 | `uvx sql-agent-cli skill --help` | Show skill-management commands |
 | `uvx sql-agent-cli --about` | Show version, project, and license metadata |
@@ -320,7 +285,7 @@ Exit codes:
 | `1` | Runtime, connection, driver, timeout, or query-execution failure |
 | `2` | Command usage or SQL validation failure |
 
-Normal query failures emit no stdout payload. `config check --format json` is the intentional exception. It emits its complete diagnostic payload on stdout and returns `1` when any selected target fails.
+Normal query failures emit no stdout payload. `setup --format json` and `config check --format json` emit structured diagnostic reports even on failure. They return `1` for runtime failures and `2` for missing or invalid input.
 
 See the [output contract](docs/output-contract.md) for stable JSON fields, value serialization, stdout and stderr behavior, and the compatibility policy.
 
@@ -346,7 +311,7 @@ uvx sql-agent-cli "EXPLAIN SELECT id, name FROM users WHERE email = 'user@exampl
 
 ## Status
 
-Version 0.13.0 is a pre-1.0 release. Its command, config, JSON, and exit-code contracts are being stabilized for 1.0. Incompatible changes found during testing will be documented.
+Version 0.14.0 is a pre-1.0 release. Its command, config, JSON, and exit-code contracts are being stabilized for 1.0. Incompatible changes found during testing will be documented.
 
 The current behavior target is defined in [`spec.md`](./spec.md). See [`CHANGELOG.md`](./CHANGELOG.md) for release history and [`SECURITY.md`](./SECURITY.md) for the security model and vulnerability-reporting guidance.
 
@@ -371,7 +336,7 @@ Build and smoke-test an installed wheel in an isolated environment:
 
 ```powershell
 uv build --no-sources
-uv run --no-project --with ./dist/sql_agent_cli-0.13.0-py3-none-any.whl python tests/wheel_smoke.py
+uv run --no-project --with ./dist/sql_agent_cli-0.14.0-py3-none-any.whl python tests/wheel_smoke.py
 ```
 
 CI runs the no-network suite on Python 3.11, 3.12, and 3.13 on Linux, plus Python 3.13 on Windows. It also runs opt-in integration tests against PostgreSQL and MySQL service containers.

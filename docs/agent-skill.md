@@ -4,7 +4,7 @@ The `$sql-agent-cli` skill teaches coding agents to use the published CLI throug
 
 ## Install the skill
 
-Install or update the user-scoped skill:
+Run `uvx sql-agent-cli setup` to configure a database and install the skill together. For skill maintenance alone:
 
 ```powershell
 uvx sql-agent-cli skill install
@@ -25,13 +25,13 @@ uvx sql-agent-cli skill status --format json
 
 ## Automatic synchronization
 
-Normal invocations of an installed CLI check an already-installed managed skill in the standard location. The running CLI version is the authority.
+Query and informational invocations of an installed CLI check an already-installed managed skill in the standard location. The running CLI version is the authority.
 
 An older, unmodified skill is replaced with the bundled skill. Equal or newer versions are left alone. Missing skills are not installed automatically. Unmanaged content is never overwritten.
 
 Synchronization is local. It does not query a package index, refresh the `uv` cache, or update the CLI. Local source checkouts, local source installations, and editable builds skip automatic synchronization.
 
-Skill-management commands also skip automatic synchronization. Changes affect future skill loading and may not replace instructions already loaded into an active agent session.
+`config`, `targets`, and skill-management commands skip automatic synchronization. Setup explicitly installs the skill after verification. Changes affect future skill loading and may not replace instructions already loaded into an active agent session.
 
 ## Integrity metadata
 
@@ -40,7 +40,7 @@ The generated skill records lifecycle information in YAML front matter:
 ```yaml
 metadata:
   managed-by: sql-agent-cli
-  managed-version: "0.13.0"
+  managed-version: "0.14.0"
   managed-content-sha256: "sha256:<64 lowercase hexadecimal characters>"
 ```
 
@@ -56,22 +56,15 @@ uvx sql-agent-cli skill install --force
 
 Force installation still refuses unmanaged content and never downgrades a newer skill.
 
-## Custom skill locations
+## Agent discovery
 
-All skill commands accept `--skills-dir PATH`:
+The supported location is `~/.agents/skills/sql-agent-cli/SKILL.md`. Setup does not create agent-specific copies, links, or configuration. Start a new session in an agent that discovers this location and ask it to use the sql-agent-cli skill. Invocation syntax depends on the agent.
 
-```powershell
-uvx sql-agent-cli skill install --skills-dir C:\agent-skills
-uvx sql-agent-cli skill status --skills-dir C:\agent-skills
-```
+An agent running under another user, on a remote host, or inside a container needs access to the skill and database configuration in that execution environment. Check with `uvx sql-agent-cli config check --offline --format json` there. An offline check does not prove network access or authentication.
 
-Custom locations require explicit updates. Automatic synchronization only inspects the standard location.
+The existing `skill --skills-dir` option remains for compatibility. Setup always uses the agent-agnostic default. Custom locations require explicit maintenance.
 
-Explicit installation also works from development builds:
-
-```powershell
-uvx --from . sql-agent-cli skill install
-```
+Development builds can install the bundled skill explicitly with `uvx --from . sql-agent-cli skill install`.
 
 ## Remove the skill
 

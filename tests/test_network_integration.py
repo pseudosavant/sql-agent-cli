@@ -3,14 +3,17 @@ from __future__ import annotations
 import io
 import json
 import os
+import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
+from pathlib import Path
 from unittest.mock import patch
 
 from tests._bootstrap import bootstrap_package
 
 bootstrap_package()
 
+from sql_agent import skill
 from sql_agent.cli import main
 from sql_agent.models import AppConfig, Defaults, Target
 
@@ -21,6 +24,76 @@ RUN_INTEGRATION = os.getenv("SQL_AGENT_CLI_INTEGRATION") == "1"
     RUN_INTEGRATION, "set SQL_AGENT_CLI_INTEGRATION=1 to run network integration tests"
 )
 class NetworkIntegrationTests(unittest.TestCase):
+    def test_setup_verifies_real_servers_and_preserves_config_on_bad_password(self):
+        for engine in ("postgres", "mysql"):
+            prefix = "SQL_AGENT_CLI_" + engine.upper()
+            with (
+                self.subTest(engine=engine),
+                tempfile.TemporaryDirectory() as temporary,
+            ):
+                root = Path(temporary)
+                configuration = root / "config.toml"
+                args = [
+                    "setup",
+                    "--format",
+                    "json",
+                    "--engine",
+                    engine,
+                    "--host",
+                    self._required_env(prefix + "_HOST"),
+                    "--port",
+                    self._required_env(prefix + "_PORT"),
+                    "--database",
+                    self._required_env(prefix + "_DATABASE"),
+                    "--user",
+                    self._required_env(prefix + "_USER"),
+                    "--ssl-mode",
+                    "disabled",
+                    "--config",
+                    str(configuration),
+                    "--non-interactive",
+                ]
+                with patch.object(
+                    skill, "default_skills_dir", return_value=root / ".agents/skills"
+                ):
+                    for password, expected in (
+                        (self._required_env(prefix + "_PASSWORD"), 0),
+                        ("intentionally-invalid-ci-password", 1),
+                    ):
+                        stdout, stderr = io.StringIO(), io.StringIO()
+                        before = (
+                            configuration.read_bytes()
+                            if configuration.exists()
+                            else None
+                        )
+                        with (
+                            patch.dict(
+                                os.environ, {"SQL_AGENT_CLI_PASSWORD": password}
+                            ),
+                            redirect_stdout(stdout),
+                            redirect_stderr(stderr),
+                        ):
+                            code = main(args)
+                        self.assertEqual(code, expected, stderr.getvalue())
+                        self.assertNotIn(
+                            password, stdout.getvalue() + stderr.getvalue()
+                        )
+                        report = json.loads(stdout.getvalue())
+                        if expected == 0:
+                            self.assertTrue(report["database_ready"])
+                            self.assertTrue(report["skill_ready"])
+                            self.assertEqual(
+                                report["verification"]["read_only"], "passed"
+                            )
+                        else:
+                            self.assertEqual(
+                                report["error"]["code"], "authentication_failed"
+                            )
+                            self.assertEqual(configuration.read_bytes(), before)
+                        self.assertFalse(
+                            configuration.with_name("credentials.toml").exists()
+                        )
+
     def test_postgres_query_uses_real_driver_and_truncates_rows(self) -> None:
         payload = self._run_query(
             engine="postgres",

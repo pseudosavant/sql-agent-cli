@@ -154,39 +154,47 @@ def render_config_check_text(payload: dict[str, object]) -> str:
         f"Checked: {payload.get('checked', 0)}",
         f"Succeeded: {payload.get('succeeded', 0)}",
         f"Failed: {payload.get('failed', 0)}",
-        "",
     ]
-    results = payload.get("results", [])
-    if not isinstance(results, list) or not results:
-        lines.append("(none)")
-        return "\n".join(lines).rstrip() + "\n"
-
-    rows: list[tuple[object, ...]] = []
-    for item in results:
-        if not isinstance(item, dict):
-            continue
+    for label, field in (
+        ("Configuration", "config_path"),
+        ("Credentials", "credentials_path"),
+    ):
+        lines.extend(["", label + ":", "  " + str(payload.get(field, "-"))])
+    for item in payload.get("results", []):
         target = item.get("target", {})
-        target = target if isinstance(target, dict) else {}
-        error = item.get("error")
-        error_message = error.get("message", "") if isinstance(error, dict) else ""
-        rows.append(
-            (
-                target.get("name", "-"),
-                target.get("engine", "-"),
-                str(item.get("status", "unknown")).upper(),
-                _target_location(target),
-                _credential_summary(item.get("credential_hints", {})),
-                "yes" if item.get("can_attempt_connection") else "no",
-                error_message,
+        lines.extend(
+            [
+                "",
+                str(target.get("name", "-")) + ": " + item["status"].upper(),
+                "  Connection: " + _target_location(target),
+                "  Credential source: " + item.get("credential_source", "unavailable"),
+            ]
+        )
+        verification = item.get("verification", {})
+        for field in ("connection", "authentication", "read_only", "catalog"):
+            lines.append(
+                "  "
+                + field.replace("_", " ").capitalize()
+                + ": "
+                + verification.get(field, "not_checked")
             )
+        if verification.get("notice"):
+            lines.extend(["", verification["notice"]])
+        if item.get("error"):
+            lines.extend(["", item["error"]["message"]])
+            for step in item["error"].get("next_steps", []):
+                lines.extend(["", "Next:", "  " + step])
+    lines.extend(["", "Skill ready: " + str(payload.get("skill_ready", False)).lower()])
+    if not payload.get("offline"):
+        lines.extend(
+            [
+                "",
+                "Application table access and account write privileges were not tested.",
+            ]
         )
-    lines.append(
-        _render_grid(
-            ["name", "engine", "status", "location", "credentials", "ready", "error"],
-            rows,
-        )
-    )
-    return "\n".join(lines).rstrip() + "\n"
+    for step in payload.get("next_steps", []):
+        lines.extend(["", "Next:", "  " + step])
+    return "\n".join(lines) + "\n"
 
 
 def render_targets_text(payload: dict[str, object]) -> str:

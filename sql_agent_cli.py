@@ -2,6 +2,8 @@
 # /// script
 # requires-python = ">=3.11"
 # dependencies = [
+#   "prompt-toolkit>=3.0.48",
+#   "tomlkit>=0.13.2",
 #   "packaging>=23.2",
 #   "PyYAML>=6.0",
 #   "PyMySQL[rsa]>=1.1.0",

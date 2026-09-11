@@ -336,8 +336,6 @@ class SkillSyncTests(unittest.TestCase):
             ["--help"],
             ["--version"],
             ["--about"],
-            ["targets", "--format", "json"],
-            ["config", "show", "--format", "json"],
         ):
             with (
                 self.subTest(argv=argv),
@@ -363,7 +361,7 @@ class SkillSyncTests(unittest.TestCase):
         self.assertEqual(json.loads(stdout)["result"]["rows"], [[42]])
         self.assertIn("Updated skill", stderr)
 
-    def test_sync_failure_keeps_primary_exit_status_and_json(self) -> None:
+    def test_inspection_does_not_attempt_synchronization(self) -> None:
         self.write_skill()
         for failure in (
             PermissionError("read denied"),
@@ -380,7 +378,7 @@ class SkillSyncTests(unittest.TestCase):
                 code, stdout, stderr = self.cli(["targets", "--format", "json"])
                 self.assertEqual(code, 0)
                 self.assertIn("targets", json.loads(stdout))
-                self.assertIn("Skill synchronization skipped", stderr)
+                self.assertEqual(stderr, "")
 
     def test_status_plain_json_and_integrity_are_read_only(self) -> None:
         self.write_skill()

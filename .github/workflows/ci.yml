@@ -55,6 +55,9 @@ jobs:
       - name: Run tests
         run: uv run --locked python -m unittest discover -v
 
+      - name: Check setup through supported packaging paths
+        run: uv run --locked python tests/packaging_smoke.py
+
   integration:
     runs-on: ubuntu-latest
     permissions:
