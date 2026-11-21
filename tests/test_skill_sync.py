@@ -5,9 +5,10 @@ import io
 import json
 import re
 import sqlite3
+import sys
 import tempfile
 import unittest
-from contextlib import closing, redirect_stderr, redirect_stdout
+from contextlib import chdir, closing, redirect_stderr, redirect_stdout
 from importlib import metadata
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -41,7 +42,10 @@ class SkillSyncTests(unittest.TestCase):
         self.root = Path(temporary.name)
         self.skills_root = self.root / "skills"
         self.path = self.skills_root / skill.SKILL_NAME / "SKILL.md"
+        self.claude_skills = self.root / ".claude" / "skills"
+        self.claude_path = self.claude_skills / skill.SKILL_NAME / "SKILL.md"
         for patcher in (
+            patch.object(Path, "home", return_value=self.root),
             patch.object(skill, "default_skills_dir", return_value=self.skills_root),
             patch.object(skill, "runtime_source", return_value="installed"),
         ):
@@ -145,12 +149,29 @@ class SkillSyncTests(unittest.TestCase):
         self.assertIn("  author: Example", rendered)
         self.assertEqual(skill.inspect_skill(rendered).integrity, "valid")
 
-    def test_absent_skill_or_file_is_never_automatically_installed(self) -> None:
-        self.assertEqual(self.sync(), "")
+    def test_bare_cli_leaves_missing_and_removed_skills_absent(self) -> None:
+        self.claude_skills.parent.mkdir()
+        with patch("sql_agent.cli.load_config") as load_config:
+            code, help_text, notices = self.cli([])
+            load_config.assert_not_called()
+        self.assertEqual((code, notices), (0, ""))
+        self.assertIn("usage:", help_text)
         self.assertFalse(self.skills_root.exists())
-        self.path.parent.mkdir(parents=True)
-        self.assertEqual(self.sync(), "")
-        self.assertEqual(list(self.path.parent.iterdir()), [])
+        self.assertFalse(self.claude_skills.exists())
+        code, result, errors = self.cli(["skill", "remove"])
+        self.assertEqual((code, errors), (0, ""))
+        self.assertEqual(
+            [entry["removed"] for entry in json.loads(result)["locations"]],
+            [False, False],
+        )
+        self.assertFalse(self.claude_skills.exists())
+        self.assertEqual(self.cli(["skill", "install"])[0], 0)
+        self.assertTrue(self.path.is_file())
+        self.assertTrue(self.claude_path.is_file())
+        self.assertEqual(self.cli(["skill", "remove"])[0], 0)
+        self.assertEqual(self.cli([]), (0, help_text, ""))
+        self.assertFalse(self.path.parent.exists())
+        self.assertFalse(self.claude_path.parent.exists())
 
     def test_unmanaged_and_conflicting_legacy_skills_are_preserved(self) -> None:
         for text in (
@@ -264,6 +285,8 @@ class SkillSyncTests(unittest.TestCase):
         ):
             self.assertEqual(self.sync(), "")
             read.assert_not_called()
+        with patch.object(skill, "__version__", "invalid"):
+            self.assertFalse(skill.skill_status()["automatic_sync_eligible"])
 
     def test_local_editable_and_unknown_builds_skip_but_explicit_install_works(
         self,
@@ -281,21 +304,188 @@ class SkillSyncTests(unittest.TestCase):
                 self.assertTrue(skill.install_skill()["updated"])
 
     def test_custom_location_requires_explicit_commands(self) -> None:
+        self.claude_skills.mkdir(parents=True)
         custom = self.root / "custom"
         custom_path = custom / skill.SKILL_NAME / "SKILL.md"
-        self.assertTrue(skill.install_skill(custom)["updated"])
+        installed = skill.install_skill(custom)
+        self.assertTrue(installed["updated"])
+        self.assertNotIn("locations", installed)
+        self.assertFalse(self.skills_root.exists())
+        self.assertFalse(self.claude_path.exists())
         custom_path.write_bytes(skill.render_skill("0.11.0").encode("utf-8"))
         self.assertEqual(self.sync(), "")
-        self.assertFalse(self.skills_root.exists())
         self.assertEqual(
             skill.inspect_skill(custom_path.read_text(encoding="utf-8")).version,
             "0.11.0",
         )
         status = skill.skill_status(custom)
+        self.assertNotIn("locations", status)
         self.assertFalse(status["automatic_sync_eligible"])
         self.assertEqual(status["automatic_sync_reason"], "custom_directory")
         self.assertTrue(skill.install_skill(custom)["updated"])
         self.assertTrue(skill.remove_skill(custom)["removed"])
+
+    def test_install_detects_claude_profile_created_after_first_install(self) -> None:
+        first = skill.install_skill()
+        self.assertNotIn("locations", first)
+        self.assertFalse(self.claude_skills.parent.exists())
+
+        self.claude_skills.parent.mkdir()
+        status = skill.skill_status()
+        self.assertEqual([s["installed"] for s in status["locations"]], [True, False])
+        self.assertFalse(status["locations"][1]["automatic_sync_eligible"])
+        code, _, notices = self.cli([])
+        self.assertEqual((code, notices), (0, ""))
+        self.assertFalse(self.claude_skills.exists())
+
+        code, output, errors = self.cli(["install-skill"])
+        self.assertEqual((code, errors), (0, ""))
+        result = json.loads(output)
+        self.assertEqual(result["path"], str(self.path))
+        self.assertFalse(result["updated"])
+        self.assertEqual([s["updated"] for s in result["locations"]], [False, True])
+        self.assertEqual(
+            [s["path"] for s in result["locations"]],
+            [str(self.path), str(self.claude_path)],
+        )
+        self.assertEqual(self.claude_path.read_bytes(), self.path.read_bytes())
+        with patch.object(skill.os, "replace") as replace:
+            self.assertFalse(
+                any(s["updated"] for s in skill.install_skill()["locations"])
+            )
+            replace.assert_not_called()
+
+    def test_claude_config_dir_selects_active_profile(self) -> None:
+        self.claude_skills.mkdir(parents=True)
+        profile = self.root / "alternate profile"
+        configured_skills = profile / "skills"
+        profile.mkdir()
+        with patch.dict("os.environ", CLAUDE_CONFIG_DIR=str(profile)):
+            status = skill.skill_status(configured_skills)
+            self.assertTrue(status["standard_location"])
+            self.assertFalse(status["installed"])
+            self.assertFalse(configured_skills.exists())
+            locations = skill.install_skill()["locations"]
+            self.assertEqual(
+                Path(locations[1]["path"]),
+                configured_skills / skill.SKILL_NAME / "SKILL.md",
+            )
+            self.assertTrue(Path(locations[1]["path"]).is_file())
+        self.assertFalse(self.claude_path.exists())
+        relative_skills = self.root / "relative-profile" / "skills"
+        relative_skills.mkdir(parents=True)
+        for value in ("relative-profile", str(self.root / "absent-profile")):
+            with (
+                self.subTest(value=value),
+                chdir(self.root),
+                patch.dict("os.environ", CLAUDE_CONFIG_DIR=value),
+            ):
+                self.assertEqual(self.sync(), "")
+                self.assertNotIn("locations", skill.install_skill())
+                self.assertFalse(self.claude_path.exists())
+        self.assertEqual(list(relative_skills.iterdir()), [])
+        self.assertFalse((self.root / "absent-profile").exists())
+
+    def test_same_skills_root_is_processed_once(self) -> None:
+        # Our temporary primary skills root is also the profile's skills directory.
+        self.skills_root.mkdir()
+        with patch.dict("os.environ", CLAUDE_CONFIG_DIR=str(self.root)):
+            self.assertNotIn("locations", skill.install_skill())
+            self.assertTrue(self.path.is_file())
+            self.assertNotIn("locations", skill.remove_skill())
+            self.assertFalse(self.path.exists())
+
+    def test_claude_skill_link_to_primary_is_preserved_across_remove_and_install(
+        self,
+    ) -> None:
+        self.write_skill()
+        self.claude_skills.mkdir(parents=True)
+        try:
+            self.claude_path.parent.symlink_to(
+                self.path.parent, target_is_directory=True
+            )
+        except (NotImplementedError, OSError) as exc:
+            self.skipTest(f"Directory symlinks unavailable: {exc}")
+
+        self.assertNotIn("locations", skill.skill_status())
+        self.assertTrue(skill.install_skill()["updated"])
+        self.assertEqual(
+            self.claude_path.read_bytes(), skill.render_skill().encode("utf-8")
+        )
+        self.assertNotIn("locations", skill.remove_skill())
+        self.assertFalse(self.path.exists())
+        self.assertTrue(self.claude_path.parent.is_symlink())
+        self.assertEqual(self.sync(), "")
+        self.assertFalse(self.claude_path.exists())
+        self.assertNotIn("locations", skill.install_skill())
+        self.assertTrue(self.claude_path.is_file())
+        self.assertTrue(self.claude_path.parent.is_symlink())
+
+    def test_claude_conflicts_preflight_both_install_and_remove(self) -> None:
+        self.claude_path.parent.mkdir(parents=True)
+        self.claude_path.write_text("My skill\n", encoding="utf-8")
+        with self.assertRaises(UsageError):
+            skill.install_skill(force=True)
+        self.assertFalse(self.path.exists())
+        self.write_skill(version=__version__)
+        with self.assertRaises(UsageError):
+            skill.remove_skill()
+        self.assertTrue(self.path.exists())
+        self.assertEqual(self.claude_path.read_text(encoding="utf-8"), "My skill\n")
+
+    def test_install_preserves_file_at_claude_skills_root(self) -> None:
+        self.claude_skills.parent.mkdir()
+        self.claude_skills.write_bytes(b"keep")
+        code, output, errors = self.cli(["skill", "install", "--force"])
+        self.assertEqual((code, output), (2, ""))
+        self.assertIn(str(self.claude_skills), errors)
+        self.assertFalse(self.skills_root.exists())
+        self.assertEqual(self.claude_skills.read_bytes(), b"keep")
+
+    @unittest.skipUnless(sys.platform == "win32", "Windows directory junction")
+    def test_claude_skill_junction_to_unrelated_directory_is_preserved(self) -> None:
+        from _winapi import CreateJunction
+
+        external = self.root / "other-skill"
+        external.mkdir()
+        self.claude_skills.mkdir(parents=True)
+        CreateJunction(str(external), str(self.claude_path.parent))
+        for operation in (skill.install_skill, skill.remove_skill):
+            with self.assertRaisesRegex(UsageError, "linked skill path"):
+                operation(force=True)
+        self.assertFalse(self.path.exists())
+        self.assertTrue(self.claude_path.parent.samefile(external))
+        self.assertEqual(list(external.iterdir()), [])
+
+    def test_remove_only_existing_copy_and_preserve_unrelated_files(self) -> None:
+        self.claude_path.parent.mkdir(parents=True)
+        self.claude_path.write_text(skill.render_skill(), encoding="utf-8")
+        notes = self.claude_path.with_name("notes.txt")
+        notes.write_text("keep", encoding="utf-8")
+        code, output, errors = self.cli(["remove-skill"])
+        self.assertEqual((code, errors), (0, ""))
+        result = json.loads(output)
+        self.assertFalse(result["removed"])
+        self.assertEqual([s["removed"] for s in result["locations"]], [False, True])
+        self.assertEqual(list(notes.parent.iterdir()), [notes])
+
+    def test_claude_sync_survives_unreadable_primary_skill(self) -> None:
+        self.claude_path.parent.mkdir(parents=True)
+        self.claude_path.write_text(skill.render_skill("0.11.0"), encoding="utf-8")
+        claude_status = skill.skill_status()["locations"][1]
+        self.assertTrue(claude_status["standard_location"])
+        self.assertTrue(claude_status["automatic_sync_eligible"])
+
+        self.write_skill("---\nmetadata: [\n---\n")
+        messages = self.sync()
+        self.assertIn("synchronization skipped", messages)
+        self.assertIn(str(self.claude_path), messages)
+        self.assertEqual(
+            self.claude_path.read_bytes(), skill.render_skill().encode("utf-8")
+        )
+        self.assertEqual(
+            self.path.read_text(encoding="utf-8"), "---\nmetadata: [\n---\n"
+        )
 
     def test_explicit_install_is_idempotent_and_force_restores_equal_version_edits(
         self,
@@ -354,12 +544,16 @@ class SkillSyncTests(unittest.TestCase):
         with closing(sqlite3.connect(database)) as connection:
             connection.execute("CREATE TABLE sample (value INTEGER)")
         self.write_skill()
+        self.claude_path.parent.mkdir(parents=True)
+        self.claude_path.write_bytes(skill.render_skill("0.11.0").encode("utf-8"))
         code, stdout, stderr = self.cli(
             ["--engine", "sqlite", "--path", str(database), "SELECT 42 AS value"]
         )
         self.assertEqual(code, 0)
         self.assertEqual(json.loads(stdout)["result"]["rows"], [[42]])
         self.assertIn("Updated skill", stderr)
+        self.assertIn(str(self.claude_path), stderr)
+        self.assertEqual(self.claude_path.read_bytes(), self.path.read_bytes())
 
     def test_inspection_does_not_attempt_synchronization(self) -> None:
         self.write_skill()
@@ -424,9 +618,13 @@ class SkillSyncTests(unittest.TestCase):
             self.assertFalse(status["automatic_sync_eligible"])
 
     def test_status_absent_and_unmanaged(self) -> None:
+        claude = skill.skill_status(self.claude_skills)
+        self.assertFalse(claude["automatic_sync_eligible"])
+        self.assertFalse(self.claude_skills.exists())
         status = skill.skill_status()
         self.assertFalse(status["installed"])
         self.assertFalse(status["automatic_sync_eligible"])
+        self.assertEqual(status["automatic_sync_reason"], "not_installed")
         self.assertFalse(self.skills_root.exists())
         self.write_skill("custom\n")
         status = skill.skill_status()
@@ -531,6 +729,15 @@ class SkillSyncTests(unittest.TestCase):
         self.path.parent.mkdir(parents=True)
         unrelated = self.path.parent / "notes.txt"
         unrelated.write_text("keep", encoding="utf-8")
+        self.claude_skills.mkdir(parents=True)
+        status = skill.skill_status()["locations"][0]
+        self.assertFalse(status["automatic_sync_eligible"])
+        self.assertEqual(status["automatic_sync_reason"], "not_installed")
+        code, output, notices = self.cli([])
+        self.assertEqual((code, notices), (0, ""))
+        self.assertIn("usage:", output)
+        self.assertEqual(list(self.path.parent.iterdir()), [unrelated])
+        self.assertFalse(self.claude_path.parent.exists())
         for force in (False, True):
             with self.assertRaises(UsageError):
                 skill.install_skill(force=force)

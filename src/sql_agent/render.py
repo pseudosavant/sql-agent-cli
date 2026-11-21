@@ -185,6 +185,11 @@ def render_config_check_text(payload: dict[str, object]) -> str:
             for step in item["error"].get("next_steps", []):
                 lines.extend(["", "Next:", "  " + step])
     lines.extend(["", "Skill ready: " + str(payload.get("skill_ready", False)).lower()])
+    for location in payload.get("skill", {}).get("locations", []):
+        state = location.get("status", "missing")
+        if location.get("installed"):
+            state = location["integrity"] if location.get("managed") else "unmanaged"
+        lines.append(f"  {location['path']} ({state})")
     if not payload.get("offline"):
         lines.extend(
             [

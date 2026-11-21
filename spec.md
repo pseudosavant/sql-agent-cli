@@ -25,6 +25,7 @@ License:
 Release status:
 
 - 0.14.0 adds guided setup, saved credentials, and read-only readiness checks while the public contracts are stabilized for 1.0.
+- 0.15.0 adds managed skill installation and maintenance for local Claude Code profiles.
 - The documented CLI, config, JSON, stdout/stderr, and exit-code behavior in this spec is the intended 1.0 public contract.
 
 ---
@@ -269,7 +270,9 @@ Compatibility requirement:
 
 ## Managed agent skill
 
-`uvx sql-agent-cli skill install` installs or updates the managed `$sql-agent-cli` skill at `~/.agents/skills/sql-agent-cli/SKILL.md`. `install-skill` remains an alias. All skill commands support `--skills-dir PATH` for explicit custom locations and `--format text|json`. Installation and removal retain their default deterministic JSON results. Status defaults to text.
+`uvx sql-agent-cli skill install` installs or updates the managed `$sql-agent-cli` skill at `~/.agents/skills/sql-agent-cli/SKILL.md`. If the Claude Code profile directory exists, the CLI also installs `skills/sql-agent-cli/SKILL.md` inside it and creates the `skills` folder if needed. The default profile directory is `~/.claude`. An absolute `CLAUDE_CONFIG_DIR` selects the active profile directory. When that profile directory is absent, the CLI installs only the primary copy. `install-skill` remains an alias.
+
+Install, status, and remove use the detected default locations. A Claude location that resolves to the primary skill file is managed once through the primary path. An explicit `--skills-dir PATH` selects one root for that command. All three support `--format text|json`. Install and remove default to JSON. Status defaults to text. Top-level JSON fields describe the primary location. When the CLI detects two distinct destination files, `locations` contains the result for each, primary first.
 
 One canonical renderer supplies the existing name, description, instructions, and examples. The skill continues using `uvx sql-agent-cli` with the default-target happy path, read-only boundary, least-privilege roles, structured output, native credentials, TLS behavior, and one-time `config check` troubleshooting. Generation uses UTF-8 without a BOM, LF line endings, and a trailing newline.
 
@@ -277,7 +280,9 @@ Management state lives under the supported YAML `metadata` mapping. `managed-by`
 
 The hash covers the entire normalized UTF-8 file with only the hash field's value replaced by `""`. Verification uses the installed file's original formatting, without YAML reserialization or comparison with the current bundled hash. CRLF and CR normalize to LF. The hash detects modifications and is not a signature.
 
-Query and informational CLI runs, including help, version, about, and rendering, synchronize only an existing managed skill in the standard location. Configuration, targets, and skill-management commands skip this check. Setup explicitly installs the skill after database verification. PEP 440 comparison determines whether the installed version is older, equal, or newer. Equal and newer versions are never automatically replaced. A pristine older version is updated. An older skill with a missing, malformed, or mismatched hash is preserved with a stderr recommendation to run `uvx sql-agent-cli skill install --force`.
+Query and informational CLI runs, including a bare invocation, help, version, about, and rendering, synchronize only existing managed copies in each detected default location. Configuration, targets, and skill-management commands skip automatic synchronization. Setup explicitly installs the skill after database verification. A missing copy requires setup or explicit skill installation.
+
+For an existing skill, PEP 440 comparison determines whether the installed version is older, equal, or newer. Equal and newer versions are never automatically replaced. A pristine older version is updated. An older skill with a missing, malformed, or mismatched hash is preserved with a stderr recommendation to run `uvx sql-agent-cli skill install --force`.
 
 The legacy `<!-- managed-by: sql-agent-cli -->` marker remains recognized unless parsed metadata names a different manager. Unversioned legacy skills are treated as version 0. Missing or malformed managed versions trigger a fresh replacement before hash checks. Newly generated skills use only front matter management metadata.
 
@@ -529,7 +534,7 @@ This is the preferred approach because:
 
 ## First-time setup
 
-`sql-agent-cli setup [RESOURCE]` verifies a database, saves its named target, and installs the managed skill in `~/.agents/skills/sql-agent-cli/SKILL.md`. No agent-specific copy or link is created. Existing skill integrity, unmanaged-content, and newer-version protections remain unchanged.
+`sql-agent-cli setup [RESOURCE]` verifies a database, saves its named target, and installs the managed skill under `~/.agents/skills`. It also installs the skill in the `skills` folder of an existing Claude Code profile. The CLI applies its integrity and version checks to each location.
 
 RESOURCE is a password-free PostgreSQL, MySQL, or MariaDB URL, or an existing SQLite path. Network setup resolves identity from the resource, explicit connection flags, the selected target, and native connection sources before asking for missing fields. The first target is named default unless specified. Adding a named target preserves an existing default. SQLite paths are saved absolutely.
 

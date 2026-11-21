@@ -4,15 +4,17 @@ The `$sql-agent-cli` skill teaches coding agents to use the published CLI throug
 
 ## Install the skill
 
-Run `uvx sql-agent-cli setup` to configure a database and install the skill together. For skill maintenance alone:
+Run `uvx sql-agent-cli setup` to configure a database and install the skill together. To install just the skill, use this command.
 
 ```powershell
 uvx sql-agent-cli skill install
 ```
 
-The standard location is `~/.agents/skills/sql-agent-cli/SKILL.md`.
+The primary copy lives at `~/.agents/skills/sql-agent-cli/SKILL.md`. If the Claude Code profile directory `~/.claude` exists, setup and `skill install` also write `~/.claude/skills/sql-agent-cli/SKILL.md`. They create the `skills` folder if needed. With a custom Claude Code profile, set `CLAUDE_CONFIG_DIR` to its absolute path when running the CLI. The same directory check applies to that profile.
 
-An explicit install creates a missing skill, updates a pristine older skill, and leaves a current skill unchanged. It refuses to overwrite unmanaged content or downgrade a newer skill.
+Without an existing Claude Code profile, the CLI installs only the primary copy. If you add a Claude Code profile later, run `uvx sql-agent-cli skill install` to add the skill there. This works without a database connection.
+
+If your Claude skills folder or its `sql-agent-cli` entry already links to the primary copy, the CLI manages the shared file once. Removing the skill leaves your link in place.
 
 ## Inspect the skill
 
@@ -25,9 +27,7 @@ uvx sql-agent-cli skill status --format json
 
 ## Automatic synchronization
 
-Query and informational invocations of an installed CLI check an already-installed managed skill in the standard location. The running CLI version is the authority.
-
-An older, unmodified skill is replaced with the bundled skill. Equal or newer versions are left alone. Missing skills are not installed automatically. Unmanaged content is never overwritten.
+An installed CLI checks existing copies in each default location before running a query or printing help, version, or about information. It updates unmodified older copies to the bundled version. It preserves current and newer versions, local edits, and unmanaged content. Missing copies are installed only by setup or an explicit skill installation.
 
 Synchronization is local. It does not query a package index, refresh the `uv` cache, or update the CLI. Local source checkouts, local source installations, and editable builds skip automatic synchronization.
 
@@ -40,7 +40,7 @@ The generated skill records lifecycle information in YAML front matter:
 ```yaml
 metadata:
   managed-by: sql-agent-cli
-  managed-version: "0.14.0"
+  managed-version: "0.15.0"
   managed-content-sha256: "sha256:<64 lowercase hexadecimal characters>"
 ```
 
@@ -56,28 +56,30 @@ uvx sql-agent-cli skill install --force
 
 Force installation still refuses unmanaged content and never downgrades a newer skill.
 
+The default force command applies to both detected locations. To restore just one copy, add `--skills-dir PATH` and supply its skills root.
+
 ## Agent discovery
 
-The supported location is `~/.agents/skills/sql-agent-cli/SKILL.md`. Setup does not create agent-specific copies, links, or configuration. Start a new session in an agent that discovers this location and ask it to use the sql-agent-cli skill. Invocation syntax depends on the agent.
+Start a new session and ask your agent to use the sql-agent-cli skill. In local Claude Code, type `/sql-agent-cli` followed by your request. The personal skill is available across local projects. [Claude Code skill locations](https://code.claude.com/docs/en/skills)
 
 An agent running under another user, on a remote host, or inside a container needs access to the skill and database configuration in that execution environment. Check with `uvx sql-agent-cli config check --offline --format json` there. An offline check does not prove network access or authentication.
 
-The existing `skill --skills-dir` option remains for compatibility. Setup always uses the agent-agnostic default. Custom locations require explicit maintenance.
+Pass `--skills-dir PATH` to `skill install`, `skill status`, or `skill remove` to select a single skills root. For example, `uvx sql-agent-cli skill status --skills-dir /home/alex/.claude/skills` inspects only Alex's Claude Code copy. Skills outside the default locations require explicit updates.
 
 Development builds can install the bundled skill explicitly with `uvx --from . sql-agent-cli skill install`.
 
 ## Remove the skill
 
-Remove the managed skill with:
+To remove the managed skill from both default locations, run this command.
 
 ```powershell
 uvx sql-agent-cli skill remove
 ```
 
-Removal refuses an unmanaged `SKILL.md` unless `--force` is supplied. Only `SKILL.md` is managed. Unrelated files remain in place.
+Removal refuses an unmanaged `SKILL.md` unless `--force` is supplied. Only `SKILL.md` is managed. Unrelated files remain in place. To reinstall a removed copy, run setup or `skill install`.
 
 The `install-skill` and `remove-skill` aliases remain supported for compatibility. All skill commands accept `--format text|json`. Status defaults to text. Installation and removal default to JSON.
 
 ## Maintenance behavior
 
-Automatic replacements are atomic and recheck the installed file before replacement. Maintenance failures never change the primary command exit status or JSON stdout. Successful updates and preservation warnings go to stderr.
+Automatic replacements are atomic and recheck the installed file before replacement. Maintenance failures never change the primary command exit status or JSON stdout. Update notices and preservation warnings go to stderr.

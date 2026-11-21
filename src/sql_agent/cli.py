@@ -303,8 +303,10 @@ def _handle_skill(argv: list[str]) -> int:
     parser = Parser(
         prog=f"{PROGRAM_NAME} skill",
         description=(
-            "Manage the $sql-agent-cli skill. Normal installed CLI runs update an "
-            "already-installed, pristine older managed skill in the standard location. "
+            "Manage the sql-agent-cli skill in ~/.agents/skills and in the skills "
+            "folder of an existing Claude Code profile. Installation creates the "
+            "skills folder if needed. Normal installed CLI runs update "
+            "existing, unmodified older copies in those locations. "
             "Local and editable builds skip automatic synchronization."
         ),
         epilog=(
@@ -327,7 +329,7 @@ def _handle_skill(argv: list[str]) -> int:
     remove = commands.add_parser(
         "remove",
         help="Remove a managed skill.",
-        description="Remove the managed $sql-agent-cli skill.",
+        description="Remove the managed sql-agent-cli skill.",
     )
     remove.add_argument(
         "--force", action="store_true", help="Remove even if the skill is not managed."
@@ -341,7 +343,11 @@ def _handle_skill(argv: list[str]) -> int:
         command.add_argument(
             "--skills-dir",
             type=Path,
-            help="Skills root directory. Defaults to ~/.agents/skills. Custom locations require explicit updates.",
+            help=(
+                "Manage only this skills directory. The defaults are ~/.agents/skills "
+                "and the skills folder of an existing Claude Code profile "
+                "(CLAUDE_CONFIG_DIR or ~/.claude)."
+            ),
         )
         command.add_argument(
             "--format",
@@ -365,10 +371,13 @@ def _handle_skill(argv: list[str]) -> int:
     if args.format == "json":
         print(json.dumps(payload, indent=2))
     else:
-        for key, value in payload.items():
-            print(
-                f"{key.replace('_', ' ')}: {json.dumps(value) if not isinstance(value, str) else value}"
-            )
+        for index, location in enumerate(payload.get("locations", [payload])):
+            if index:
+                print()
+            for key, value in location.items():
+                print(
+                    f"{key.replace('_', ' ')}: {json.dumps(value) if not isinstance(value, str) else value}"
+                )
     return 0
 
 
@@ -482,6 +491,15 @@ def _config_check(config: AppConfig, args: argparse.Namespace) -> int:
         skill = skill_status()
     except Exception:  # noqa: BLE001 - Preserve the primary result if optional maintenance fails.
         skill = {"installed": False, "status": "unavailable"}
+    unready_skills = [
+        location
+        for location in skill.get("locations", [skill])
+        if not (
+            location.get("installed")
+            and location.get("managed")
+            and location.get("integrity") == "valid"
+        )
+    ]
     failed = sum(item["status"] == "error" for item in results)
     payload = {
         "checked": len(results),
@@ -494,14 +512,18 @@ def _config_check(config: AppConfig, args: argparse.Namespace) -> int:
         "skill": skill,
         "next_steps": issues,
         "database_ready": None if args.offline else bool(names) and not failed,
-        "skill_ready": bool(
-            skill.get("installed")
-            and skill.get("managed")
-            and skill.get("integrity") == "valid"
-        ),
+        "skill_ready": not unready_skills,
     }
-    if not payload["skill_ready"]:
-        payload["next_steps"].append("uvx sql-agent-cli skill install")
+    if unready_skills:
+        needs_review = any(
+            location.get("installed") or location.get("status") == "unavailable"
+            for location in unready_skills
+        )
+        payload["next_steps"].append(
+            "uvx sql-agent-cli skill status"
+            if needs_review
+            else "uvx sql-agent-cli skill install"
+        )
     if args.format == "json":
         print(json.dumps(payload, indent=2, sort_keys=True))
     else:
@@ -567,8 +589,8 @@ def _build_query_parser() -> argparse.ArgumentParser:
             f"  {PROGRAM_NAME} skill status [--format json]\n"
             f"  {PROGRAM_NAME} skill remove [--force]\n"
             "  install-skill and remove-skill remain supported aliases.\n\n"
-            "Installed managed skills synchronize locally on normal runs.\n"
-            "Only pristine older skills in ~/.agents/skills are updated automatically.\n"
+            "Normal runs update existing, unmodified older skills\n"
+            "in ~/.agents/skills and in the active Claude Code profile's skills folder.\n"
             "Local and editable builds skip synchronization. See skill --help."
         ),
         formatter_class=HelpFormatter,

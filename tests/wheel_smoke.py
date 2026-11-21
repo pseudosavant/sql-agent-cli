@@ -20,9 +20,22 @@ def smoke(expected_source: str) -> None:
     assert version("sql-agent-cli") == __version__
     assert skill.runtime_source() == expected_source, skill.runtime_source()
     with tempfile.TemporaryDirectory() as temporary:
-        skills_root = Path(temporary) / "skills"
-        with patch.object(skill, "default_skills_dir", return_value=skills_root):
+        home = Path(temporary)
+        claude_dir = home / ".claude"
+        claude_skills = claude_dir / "skills"
+        claude_dir.mkdir()
+        with (
+            patch.object(Path, "home", return_value=home),
+            patch.dict("os.environ", CLAUDE_CONFIG_DIR=str(claude_dir)),
+        ):
             path = skill.skill_dir() / "SKILL.md"
+            claude_path = claude_skills / skill.SKILL_NAME / "SKILL.md"
+            stdout, stderr = io.StringIO(), io.StringIO()
+            with redirect_stdout(stdout), redirect_stderr(stderr):
+                assert main([]) == 0
+            assert "usage:" in stdout.getvalue()
+            assert stderr.getvalue() == ""
+            assert not path.parent.exists() and not claude_skills.exists()
             path.parent.mkdir(parents=True)
             older = skill.render_skill("0.0")
             path.write_bytes(older.encode("utf-8"))
@@ -42,11 +55,13 @@ def smoke(expected_source: str) -> None:
             else:
                 assert stderr.getvalue() == ""
                 assert path.read_bytes() == older.encode("utf-8")
+            assert not claude_skills.exists()
             stdout = io.StringIO()
             with redirect_stdout(stdout):
                 assert main(["skill", "install"]) == 0
             assert json.loads(stdout.getvalue())["installed"]
             assert path.read_bytes() == skill.render_skill().encode("utf-8")
+            assert claude_path.read_bytes() == path.read_bytes()
             assert (
                 skill.inspect_skill(path.read_text(encoding="utf-8")).integrity
                 == "valid"

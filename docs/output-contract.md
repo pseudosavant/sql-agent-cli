@@ -90,6 +90,10 @@ Setup defaults to a human-readable text report. `setup --format json` reports `s
 
 `--format text` explicitly selects the default text report. Interactive prompts and progress remain on stderr. Argument-parser failures happen before a report is available.
 
+## Skill management output
+
+`skill install`, `skill status`, and `skill remove` report the primary location in the top-level JSON fields. When the CLI detects a distinct destination file for Claude Code, it adds a `locations` array with one result per copy, starting with the primary location. Supplying `--skills-dir PATH` returns the single result for that root. Setup and configuration checks report skill results under `skill`. Their `skill_ready` field covers all detected locations.
+
 ## Stdout and stderr
 
 Stdout is reserved for payload output. Diagnostics and errors go to stderr. Normal query failures emit no stdout payload.

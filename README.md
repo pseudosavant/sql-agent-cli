@@ -28,7 +28,7 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 uvx sql-agent-cli setup
 ```
 
-Setup asks only for missing connection details. It masks password input with asterisks, verifies the database, saves the target and any entered password separately, and installs the managed skill in `~/.agents/skills/sql-agent-cli/SKILL.md`. Environment variables are optional. No separate test or skill installation command is needed.
+Setup asks for missing connection details, masks password input, and verifies the database. It saves the target and any entered password separately. It installs the managed skill in `~/.agents/skills/sql-agent-cli/SKILL.md`. If your Claude Code profile directory exists, setup also installs the skill in its `skills` folder and creates that folder if needed. The default profile directory is `~/.claude`.
 
 To skip connection questions, supply a password-free URL. These commands work in both shells. Replace the example connection details with yours:
 
@@ -48,17 +48,17 @@ uvx sql-agent-cli setup 'C:\data\app.db'
 uvx sql-agent-cli setup "$HOME/data/app.db"
 ```
 
-Start a new agent session that discovers `~/.agents/skills`, then ask:
+Start a new agent session and try this request.
 
 > Use the sql-agent-cli skill to list the tables in my default database and explain their columns. Do not read application rows yet.
 
-Use your agent's skill picker if needed. This project supports the agent-agnostic location only. It does not install an agent-specific copy. A remote agent or container needs its own reachable database, configuration, credentials, and skill files.
+In local Claude Code, invoke the skill with `/sql-agent-cli`. If you start using Claude Code after setup, run `uvx sql-agent-cli skill install` once your profile exists. A remote agent or container needs its own reachable database, configuration, credentials, and skill files.
 
 See [Setup and authentication](docs/setup.md) for required permissions, native authentication, private CAs, password renewal, multiple targets, and troubleshooting.
 
 ## Manage the agent skill
 
-Inspect, update, or remove the managed skill:
+Use these commands to inspect, install, or remove the managed skill. They work before you configure a database.
 
 ```powershell
 uvx sql-agent-cli skill status
@@ -66,7 +66,7 @@ uvx sql-agent-cli skill install
 uvx sql-agent-cli skill remove
 ```
 
-Normal runs of an installed CLI keep an existing, unmodified managed skill synchronized with the running CLI version. Missing skills and unmanaged files are left alone. Use `skill install --force` to restore modified managed content.
+A plain `uvx sql-agent-cli` updates existing, unmodified older copies. Installing a missing copy requires `setup` or `skill install`. Use `skill install --force` to restore modified managed content.
 
 See [Managed agent skill](docs/agent-skill.md) for integrity metadata, automatic synchronization, custom locations, compatibility aliases, and removal behavior.
 
@@ -311,7 +311,7 @@ uvx sql-agent-cli "EXPLAIN SELECT id, name FROM users WHERE email = 'user@exampl
 
 ## Status
 
-Version 0.14.0 is a pre-1.0 release. Its command, config, JSON, and exit-code contracts are being stabilized for 1.0. Incompatible changes found during testing will be documented.
+The development version is 0.15.0. Its command, config, JSON, and exit-code contracts are being stabilized for 1.0. Incompatible changes found during testing will be documented.
 
 The current behavior target is defined in [`spec.md`](./spec.md). See [`CHANGELOG.md`](./CHANGELOG.md) for release history and [`SECURITY.md`](./SECURITY.md) for the security model and vulnerability-reporting guidance.
 
@@ -336,7 +336,7 @@ Build and smoke-test an installed wheel in an isolated environment:
 
 ```powershell
 uv build --no-sources
-uv run --no-project --with ./dist/sql_agent_cli-0.14.0-py3-none-any.whl python tests/wheel_smoke.py
+uv run --no-project --with ./dist/sql_agent_cli-0.15.0-py3-none-any.whl python tests/wheel_smoke.py
 ```
 
 CI runs the no-network suite on Python 3.11, 3.12, and 3.13 on Linux, plus Python 3.13 on Windows. It also runs opt-in integration tests against PostgreSQL and MySQL service containers.

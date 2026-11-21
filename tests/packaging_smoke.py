@@ -32,6 +32,7 @@ def smoke():
             key: value
             for key, value in os.environ.items()
             if not key.startswith(("PG", "SQL_AGENT_CLI_"))
+            and key != "CLAUDE_CONFIG_DIR"
         }
         env.update(HOME=str(root), USERPROFILE=str(root), APPDATA=str(root))
         run(["uv", "build", "--out-dir", str(root / "dist")], repository, env)
@@ -78,6 +79,13 @@ def smoke():
                 str(repository / "sql_agent_cli.py"),
             ],
         }
+        claude_skills = root / ".claude" / "skills"
+        claude_skills.parent.mkdir()
+        skill_file = Path("sql-agent-cli") / "SKILL.md"
+        primary = root / ".agents" / "skills" / skill_file
+        claude = claude_skills / skill_file
+        assert "usage:" in run(commands["uvx"], root, env)
+        assert not primary.exists() and not claude_skills.exists()
         for name, command in commands.items():
             configuration = root / name / "config.toml"
             output = run(
@@ -95,12 +103,16 @@ def smoke():
                 env,
             )
             assert json.loads(output)["status"] == "ready"
+            assert claude.read_bytes() == primary.read_bytes()
             output = run(
                 [*command, "--config", str(configuration), "PRAGMA table_info(sample)"],
                 root,
                 env,
             )
             assert json.loads(output)["result"]["rows"][0][1] == "value"
+        run([*commands["uvx"], "skill", "remove"], root, env)
+        assert "usage:" in run(commands["uvx"], root, env)
+        assert not primary.exists() and not claude.exists()
     print("Packaging smoke passed: wheel, source archive, uvx, and PEP 723 wrapper.")
 
 

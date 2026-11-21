@@ -93,7 +93,11 @@ def setup(argv: list[str]) -> int:
 
     parser = Parser(
         prog="sql-agent-cli setup",
-        description="Verify a database, save its target, and install the managed skill in ~/.agents/skills. Enter passwords only at the masked terminal prompt.",
+        description=(
+            "Verify a database, save its target, and install the managed skill in "
+            "~/.agents/skills and the skills folder of an existing Claude Code profile. "
+            "Enter passwords only at the masked terminal prompt."
+        ),
     )
     parser.add_argument(
         "resource",
@@ -368,7 +372,7 @@ def _setup(args, report):
         skill_ready=True,
         status="ready",
         next_steps=[
-            "Start a new agent session that discovers ~/.agents/skills. Ask it to use the sql-agent-cli skill to list tables and explain their columns."
+            "Start a new agent session. Ask it to use the sql-agent-cli skill to list tables and explain their columns."
         ],
     )
 
@@ -438,10 +442,16 @@ def _render(report):
     for field, label in (
         ("config_path", "Configuration"),
         ("credentials_path", "Credentials"),
-        ("skill_path", "Managed skill"),
     ):
         if report.get(field):
             lines.extend(["", label + ":", "  " + report[field]])
+    if report.get("skill_path"):
+        lines.extend(["", "Managed skill:"])
+        locations = report.get("skill", {}).get("locations")
+        if locations:
+            lines.extend("  " + location["path"] for location in locations)
+        else:
+            lines.append("  " + report["skill_path"])
     lines.extend(
         [
             "",

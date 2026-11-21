@@ -32,6 +32,7 @@ class OnboardingTests(unittest.TestCase):
             key: value
             for key, value in os.environ.items()
             if not key.startswith(("PG", "SQL_AGENT_CLI_"))
+            and key != "CLAUDE_CONFIG_DIR"
         }
         env.update(
             HOME=str(self.root),
@@ -128,6 +129,60 @@ class OnboardingTests(unittest.TestCase):
         )
         self.assertEqual(code, 0, errors)
         self.assertEqual(json.loads(output)["result"]["rows"], [["sample"]])
+
+    def test_setup_and_config_check_report_both_skill_locations(self):
+        claude_root = self.root / ".claude" / "skills"
+        claude_root.parent.mkdir()
+        primary = skill.skill_dir() / "SKILL.md"
+        claude = claude_root / "sql-agent-cli" / "SKILL.md"
+
+        code, output, errors = self.call(
+            "setup", "--format", "json", str(self.database)
+        )
+        self.assertEqual(code, 0, errors)
+        report = json.loads(output)
+        self.assertTrue(report["skill_ready"])
+        self.assertEqual(report["skill_path"], str(primary))
+        self.assertEqual(
+            [entry["path"] for entry in report["skill"]["locations"]],
+            [str(primary), str(claude)],
+        )
+        self.assertEqual(claude.read_bytes(), primary.read_bytes())
+        for args in (("setup",), ("skill", "status"), ("config", "check", "--offline")):
+            with self.subTest(args=args):
+                code, output, errors = self.call(*args)
+                self.assertEqual(code, 0, errors)
+                self.assertIn(str(primary), output)
+                self.assertIn(str(claude), output)
+
+        claude.unlink()
+        code, output, errors = self.call(
+            "config", "check", "--offline", "--format", "json"
+        )
+        self.assertEqual(code, 0, errors)
+        report = json.loads(output)
+        self.assertTrue(report["skill"]["installed"])
+        self.assertFalse(report["skill"]["locations"][1]["installed"])
+        self.assertFalse(report["skill_ready"])
+        self.assertIn("uvx sql-agent-cli skill install", report["next_steps"])
+        self.assertFalse(claude.exists())
+
+    def test_setup_reports_protected_claude_skill_after_saving_configuration(self):
+        claude = self.root / ".claude/skills/sql-agent-cli/SKILL.md"
+        claude.parent.mkdir(parents=True)
+        claude.write_text("Personal instructions\n", encoding="utf-8")
+        before = claude.read_bytes()
+        code, output, errors = self.call(
+            "setup", "--format", "json", str(self.database)
+        )
+        self.assertNotEqual(code, 0)
+        report = json.loads(output)
+        self.assertTrue(report["database_ready"])
+        self.assertTrue(report["configuration_saved"])
+        self.assertFalse(report["skill_ready"])
+        self.assertIn(str(claude), report["error"]["message"])
+        self.assertIn(str(claude), errors)
+        self.assertEqual(claude.read_bytes(), before)
 
     def test_repeat_setup_preserves_comments_unknown_fields_and_default(self):
         self.call(

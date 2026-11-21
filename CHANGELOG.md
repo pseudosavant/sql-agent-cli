@@ -4,6 +4,8 @@ All notable changes to this project are documented here. Starting with 1.0.0, re
 
 ## [Unreleased]
 
+- Setup and `skill install` now install the managed skill in an existing Claude Code profile as well as `~/.agents/skills`. They create the profile's `skills` folder if needed. Status, removal, and automatic updates of existing copies cover both locations.
+
 ## [0.14.0] - 2026-09-10
 
 - Added one-command setup that accepts password-free database URLs or SQLite paths, prompts for missing details, verifies the database, and installs the managed skill in `~/.agents/skills`.

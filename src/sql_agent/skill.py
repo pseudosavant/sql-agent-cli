@@ -4,8 +4,10 @@ import hashlib
 import json
 import os
 import re
+import stat
 import sys
 import tempfile
+from collections.abc import Iterator
 from dataclasses import dataclass
 from importlib import metadata
 from pathlib import Path
@@ -31,7 +33,7 @@ FRONT_MATTER = re.compile(
 
 _SKILL_TEMPLATE = """---
 name: sql-agent-cli
-description: Run safe, read-only SQL queries against configured MySQL, MariaDB, PostgreSQL, or SQLite targets using `uvx sql-agent-cli`. Use when the user invokes `$sql-agent-cli`, asks to inspect database data or schema, answer a question from SQL data, compare records, count or summarize rows, or run a specific read-only query.
+description: Run safe, read-only SQL queries against configured MySQL, MariaDB, PostgreSQL, or SQLite targets using `uvx sql-agent-cli`. Use when the user invokes `$sql-agent-cli` or `/sql-agent-cli`. Also use when asked to inspect data or schema, answer a question from SQL data, compare records, count or summarize rows, or run a specific read-only query.
 metadata:
   managed-by: sql-agent-cli
   managed-version: {managed_version}
@@ -136,7 +138,7 @@ For a one-off SQLite database, an explicit path is appropriate:
 uvx sql-agent-cli --engine sqlite --path ./app.db "SELECT ..."
 ```
 
-Setup installs this skill in `~/.agents/skills/sql-agent-cli/SKILL.md`. The project does not manage agent-specific copies.
+Both `uvx sql-agent-cli setup` and `uvx sql-agent-cli skill install` install this skill in `~/.agents/skills`. If a Claude Code profile directory exists, they also install the skill there and create its `skills` folder as needed.
 
 For network databases, keep secure TLS defaults. New setup targets use `--ssl-mode verify-full`, which verifies the certificate and hostname. Existing `--ssl-mode required` settings guarantee encryption without guaranteeing server identity. Do not use `--insecure` or disable TLS unless the user explicitly accepts that change.
 """
@@ -144,6 +146,35 @@ For network databases, keep secure TLS defaults. New setup targets use `--ssl-mo
 
 def default_skills_dir() -> Path:
     return Path.home() / ".agents" / "skills"
+
+
+def _claude_skills_dir() -> Path | None:
+    config_dir = os.environ.get("CLAUDE_CONFIG_DIR")
+    profile = Path(config_dir) if config_dir else Path.home() / ".claude"
+    return profile / "skills" if profile.is_absolute() and profile.is_dir() else None
+
+
+def _skill_roots(skills_dir: Path | None = None) -> Iterator[Path]:
+    if skills_dir is not None:
+        yield skills_dir
+        return
+    primary = default_skills_dir()
+    yield primary
+    claude = _claude_skills_dir()
+    if claude is not None:
+        if not claude.is_dir() and os.path.lexists(claude):
+            raise UsageError(f"expected a skills directory at '{claude}'.")
+        # Claude users may already link the whole root or this individual skill.
+        primary_file = skill_dir(primary) / "SKILL.md"
+        claude_file = skill_dir(claude) / "SKILL.md"
+        if claude_file.resolve() != primary_file.resolve():
+            yield claude
+
+
+def _location_results(results: list[dict[str, Any]]) -> dict[str, Any]:
+    if len(results) == 1:
+        return results[0]
+    return {**results[0], "locations": results}
 
 
 def skill_dir(skills_dir: Path | None = None) -> Path:
@@ -264,7 +295,14 @@ def inspect_skill(content: str) -> SkillState:
 
 def _check_path(path: Path) -> None:
     for item in (path.parent, path):
-        if item.is_symlink() or getattr(item, "is_junction", lambda: False)():
+        try:
+            info = item.lstat()
+        except (FileNotFoundError, NotADirectoryError):
+            continue
+        # Path.is_junction() is unavailable on Python 3.11.
+        if stat.S_ISLNK(info.st_mode) or (
+            os.name == "nt" and info.st_reparse_tag == stat.IO_REPARSE_TAG_MOUNT_POINT
+        ):
             raise UsageError(f"refusing to manage linked skill path '{item}'.")
     if path.parent.exists() and not path.parent.is_dir():
         raise UsageError(f"expected a skill directory at '{path.parent}'.")
@@ -337,7 +375,20 @@ def _update_reason(state: SkillState, current: Version | None) -> str:
 
 
 def skill_status(skills_dir: Path | None = None) -> dict[str, Any]:
-    path = skill_dir(skills_dir) / "SKILL.md"
+    source = runtime_source()
+    standard = skills_dir is None or skills_dir.absolute() in (
+        default_skills_dir(),
+        _claude_skills_dir(),
+    )
+    return _location_results(
+        [
+            _status_at(skill_dir(root) / "SKILL.md", standard, source)
+            for root in _skill_roots(skills_dir)
+        ]
+    )
+
+
+def _status_at(path: Path, standard: bool, source: str) -> dict[str, Any]:
     state = _read_skill(path)
     current = _version(__version__)
     installed = _version(state.version)
@@ -350,8 +401,6 @@ def skill_status(skills_dir: Path | None = None) -> dict[str, Any]:
             if installed > current
             else "equal"
         )
-    source = runtime_source()
-    standard = path.absolute() == (skill_dir() / "SKILL.md").absolute()
     reason = _update_reason(state, current)
     if source != "installed":
         reason = (
@@ -413,8 +462,38 @@ def _atomic_replace(path: Path, text: str, expected: SkillState) -> None:
 def install_skill(
     skills_dir: Path | None = None, *, force: bool = False
 ) -> dict[str, Any]:
-    path = skill_dir(skills_dir) / "SKILL.md"
-    state = _read_skill(path)
+    canonical = render_skill()
+    # Check every destination before changing any copy.
+    plan = []
+    for root in _skill_roots(skills_dir):
+        path = skill_dir(root) / "SKILL.md"
+        state = _read_skill(path)
+        updated = _needs_install(path, state, canonical, force)
+        plan.append((path, state, updated))
+
+    results = []
+    for path, state, updated in plan:
+        if updated:
+            root = path.parent.parent
+            # An implicit Claude destination requires an existing profile.
+            root.mkdir(
+                parents=skills_dir is not None or root == default_skills_dir(),
+                exist_ok=True,
+            )
+            path.parent.mkdir(exist_ok=True)
+            _atomic_replace(path, canonical, state)
+        results.append(
+            {
+                "installed": True,
+                "updated": updated,
+                "skill": SKILL_NAME,
+                "path": str(path),
+            }
+        )
+    return _location_results(results)
+
+
+def _needs_install(path: Path, state: SkillState, canonical: str, force: bool) -> bool:
     reason = _update_reason(state, _version(__version__))
     if state.installed and not state.managed:
         raise UsageError(f"refusing to overwrite unmanaged skill '{path}'.")
@@ -432,25 +511,15 @@ def install_skill(
         raise UsageError(
             f"refusing to overwrite altered or unverifiable skill '{path}'. Use `{FORCE_INSTALL_COMMAND}`."
         )
-    canonical = render_skill()
-    updated = (
+    if not state.installed and path.parent.exists() and any(path.parent.iterdir()):
+        raise UsageError(
+            f"refusing to install into nonempty directory '{path.parent}' without SKILL.md."
+        )
+    return (
         reason != "newer"
         and (force or reason != "current")
         and (state.content is None or _normalize(state.content) != canonical)
     )
-    if updated:
-        if not state.installed and path.parent.exists() and any(path.parent.iterdir()):
-            raise UsageError(
-                f"refusing to install into nonempty directory '{path.parent}' without SKILL.md."
-            )
-        path.parent.mkdir(parents=True, exist_ok=True)
-        _atomic_replace(path, canonical, state)
-    return {
-        "installed": True,
-        "updated": updated,
-        "skill": SKILL_NAME,
-        "path": str(path),
-    }
 
 
 def synchronize_skill() -> None:
@@ -459,38 +528,64 @@ def synchronize_skill() -> None:
         current = _version(__version__)
         if current is None or runtime_source() != "installed":
             return
-        path = skill_dir() / "SKILL.md"
-        state = _read_skill(path)
-        reason = _update_reason(state, current)
-        if reason == "altered":
-            print(
-                f"Skill at '{path}' is altered or unverifiable. Use `{FORCE_INSTALL_COMMAND}` to replace it.",
-                file=sys.stderr,
-            )
-        elif reason in {"older", "recovery"}:
-            _atomic_replace(path, render_skill(), state)
-            print(
-                f"Updated skill {state.version or 'unknown'} -> {__version__} at '{path}'.",
-                file=sys.stderr,
-            )
+        for root in _skill_roots():
+            path = skill_dir(root) / "SKILL.md"
+            try:
+                _synchronize_at(path, current)
+            except Exception as exc:  # noqa: BLE001 - continue with the other locations.
+                _warn_sync_skipped(exc, path)
     except Exception as exc:  # noqa: BLE001 - maintenance must not fail a command.
-        message = " ".join(str(exc).split()) or type(exc).__name__
-        print(f"Skill synchronization skipped: {message}", file=sys.stderr)
+        _warn_sync_skipped(exc)
+
+
+def _synchronize_at(path: Path, current: Version) -> None:
+    state = _read_skill(path)
+    reason = _update_reason(state, current)
+    if reason == "altered":
+        print(
+            f"Skill at '{path}' is altered or unverifiable. Use `{FORCE_INSTALL_COMMAND}` to replace it.",
+            file=sys.stderr,
+        )
+    elif reason in {"older", "recovery"}:
+        _atomic_replace(path, render_skill(), state)
+        print(
+            f"Updated skill {state.version or 'unknown'} -> {__version__} at '{path}'.",
+            file=sys.stderr,
+        )
+
+
+def _warn_sync_skipped(exc: Exception, path: Path | None = None) -> None:
+    message = " ".join(str(exc).split()) or type(exc).__name__
+    location = f" at '{path}'" if path is not None else ""
+    print(f"Skill synchronization skipped{location}: {message}", file=sys.stderr)
 
 
 def remove_skill(
     skills_dir: Path | None = None, *, force: bool = False
 ) -> dict[str, Any]:
-    target = skill_dir(skills_dir)
-    path = target / "SKILL.md"
+    paths = [skill_dir(root) / "SKILL.md" for root in _skill_roots(skills_dir)]
+    # Catch conflicts in additional locations before removing the primary copy.
+    for path in paths[1:]:
+        _can_remove(path, force)
+    results = []
+    for path in paths:
+        removed = _can_remove(path, force)
+        result = {"removed": removed, "skill": SKILL_NAME, "path": str(path.parent)}
+        if removed:
+            path.unlink()
+            if not any(path.parent.iterdir()):
+                path.parent.rmdir()
+        else:
+            result["reason"] = "not_installed"
+        results.append(result)
+    return _location_results(results)
+
+
+def _can_remove(path: Path, force: bool) -> bool:
+    target = path.parent
     _check_path(path)
     if not target.exists():
-        return {
-            "removed": False,
-            "skill": SKILL_NAME,
-            "path": str(target),
-            "reason": "not_installed",
-        }
+        return False
     if not path.exists():
         raise UsageError(f"refusing to remove '{target}' because SKILL.md is missing.")
     if not force and not _read_skill(path).managed:
@@ -498,7 +593,4 @@ def remove_skill(
             f"refusing to remove '{target}' because it is not marked as managed by sql-agent-cli. "
             "Use --force to override."
         )
-    path.unlink()
-    if not any(target.iterdir()):
-        target.rmdir()
-    return {"removed": True, "skill": SKILL_NAME, "path": str(target)}
+    return True

@@ -58,6 +58,7 @@ Credentials:
 
 Managed skill:
   /home/alex/.agents/skills/sql-agent-cli/SKILL.md
+  /home/alex/.claude/skills/sql-agent-cli/SKILL.md
 
 Database verified: true
 Configuration saved: true
@@ -66,7 +67,7 @@ Skill ready: true
 Credential source: input
 Credential persistence: file
 
-Start a new agent session that discovers ~/.agents/skills. Ask it to use the sql-agent-cli skill to list tables and explain their columns.
+Start a new agent session. Ask it to use the sql-agent-cli skill to list tables and explain their columns.
 ```
 
 ## Permissions and lifetime
@@ -126,7 +127,7 @@ Query `--engine` retains its existing one-off behavior and bypasses default targ
 
 Include the same path options in recovery commands when using custom files.
 
-Paths and environment variables belong to the process that runs the CLI. A terminal, sandbox, container, remote host, and agent can have different homes, mounts, users, network routes, and inherited variables. A terminal login does not establish agent access. Install the managed skill in the agent's `~/.agents/skills` and provide configuration plus credentials there, or supply explicit mounted paths. No agent-specific location is managed.
+Paths and environment variables belong to the process that runs the CLI. A terminal, sandbox, container, remote host, and agent can have different homes, mounts, users, network routes, and inherited variables. Run setup in the agent's environment or provide mounted paths for its configuration and credentials. Setup installs the skill in `~/.agents/skills`. If a Claude Code profile exists, setup installs a second copy in its `skills` folder and creates that folder if needed. The default profile is `~/.claude`. If you use `CLAUDE_CONFIG_DIR`, give the CLI the same absolute profile path.
 
 For automation, use `setup --non-interactive --format json` with complete connection details and a saved, native, or environment credential. It never prompts or consumes stdin. Missing information fails with exit code 2 before saving anything. Use `--auth native` explicitly for passwordless native authentication. Secrets must be supplied by the host's credential mechanism, not literal command arguments.
 

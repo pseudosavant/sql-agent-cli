@@ -18,6 +18,7 @@ def bootstrap_package() -> None:
     test_home = Path(_SKILL_HOME.name)
     for key in list(os.environ):
         if key.startswith("PG") or key in {
+            "CLAUDE_CONFIG_DIR",
             "SQL_AGENT_CLI_CONFIG",
             "SQL_AGENT_CLI_CREDENTIALS_FILE",
             "SQL_AGENT_CLI_TARGET",
