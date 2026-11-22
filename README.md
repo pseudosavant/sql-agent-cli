@@ -311,7 +311,7 @@ uvx sql-agent-cli "EXPLAIN SELECT id, name FROM users WHERE email = 'user@exampl
 
 ## Status
 
-The development version is 0.15.0. Its command, config, JSON, and exit-code contracts are being stabilized for 1.0. Incompatible changes found during testing will be documented.
+Version 0.15.0 is a pre-1.0 release. Its command, config, JSON, and exit-code contracts are being stabilized for 1.0. Incompatible changes found during testing will be documented.
 
 The current behavior target is defined in [`spec.md`](./spec.md). See [`CHANGELOG.md`](./CHANGELOG.md) for release history and [`SECURITY.md`](./SECURITY.md) for the security model and vulnerability-reporting guidance.
 

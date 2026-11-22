@@ -167,8 +167,33 @@ def _skill_roots(skills_dir: Path | None = None) -> Iterator[Path]:
         # Claude users may already link the whole root or this individual skill.
         primary_file = skill_dir(primary) / "SKILL.md"
         claude_file = skill_dir(claude) / "SKILL.md"
-        if claude_file.resolve() != primary_file.resolve():
+        if not _same_skill_file(claude_file, primary_file):
             yield claude
+
+
+def _same_skill_file(claude: Path, primary: Path) -> bool:
+    target = primary.resolve()
+    if claude.resolve() == target:
+        return True
+    # Windows may leave a dangling symlink unresolved after skill removal.
+    if claude.is_symlink():
+        linked = claude.parent / _read_skill_link(claude)
+    elif claude.parent.is_symlink():
+        linked = claude.parent.parent / _read_skill_link(claude.parent) / claude.name
+    else:
+        return False
+    return linked.resolve() == target
+
+
+def _read_skill_link(path: Path) -> Path:
+    target = path.readlink()
+    # Windows readlink() returns an extended path for absolute targets.
+    if os.name == "nt" and target.drive.startswith("\\\\?\\"):
+        if target.drive[4:8].upper() == "UNC\\":
+            return Path("\\\\" + str(target)[8:])
+        if re.fullmatch(r"[A-Za-z]:", target.drive[4:]):
+            return Path(str(target)[4:])
+    return target
 
 
 def _location_results(results: list[dict[str, Any]]) -> dict[str, Any]:

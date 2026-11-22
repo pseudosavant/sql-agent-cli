@@ -4,6 +4,8 @@ All notable changes to this project are documented here. Starting with 1.0.0, re
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-11-21
+
 - Setup and `skill install` now install the managed skill in an existing Claude Code profile as well as `~/.agents/skills`. They create the profile's `skills` folder if needed. Status, removal, and automatic updates of existing copies cover both locations.
 
 ## [0.14.0] - 2026-09-10
@@ -37,7 +39,8 @@ All notable changes to this project are documented here. Starting with 1.0.0, re
 - Added and refined the managed `$sql-agent-cli` skill, including `uvx` invocation, troubleshooting, least-privilege, and TLS guidance.
 - Documented the public JSON, config, stream, exit-code, semantic-versioning, deprecation, and security contracts targeted for 1.0.
 
-[Unreleased]: https://github.com/pseudosavant/sql-agent-cli/compare/v0.14.0...HEAD
+[Unreleased]: https://github.com/pseudosavant/sql-agent-cli/compare/v0.15.0...HEAD
+[0.15.0]: https://github.com/pseudosavant/sql-agent-cli/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/pseudosavant/sql-agent-cli/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/pseudosavant/sql-agent-cli/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/pseudosavant/sql-agent-cli/compare/v0.11.0...v0.12.0
